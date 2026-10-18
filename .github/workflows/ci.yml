@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        firebird: ["3", "4", "5"]
+    services:
+      firebird:
+        image: firebirdsql/firebird:${{ matrix.firebird }}
+        env:
+          FIREBIRD_ROOT_PASSWORD: masterkey
+          FIREBIRD_DATABASE: test.fdb
+        ports:
+          - 3050:3050
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Load example database
+        run: |
+          for i in $(seq 1 30); do
+            docker exec ${{ job.services.firebird.id }} test -f /var/lib/firebird/data/test.fdb && break
+            sleep 2
+          done
+          sleep 3
+          docker cp examples/bookstore.sql ${{ job.services.firebird.id }}:/tmp/bookstore.sql
+          docker exec ${{ job.services.firebird.id }} /opt/firebird/bin/isql \
+            -user SYSDBA -password masterkey localhost:/var/lib/firebird/data/test.fdb -i /tmp/bookstore.sql
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        env:
+          FBREST_TEST_DB_URI: authenticator:authenticator@localhost:3050/var/lib/firebird/data/test.fdb
+        run: go test -race -count=1 ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t firebirdrest .

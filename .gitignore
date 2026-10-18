@@ -1,0 +1,4 @@
+/firebirdrest
+/dist/
+*.fdb
+.env

@@ -1,0 +1,448 @@
+package query
+
+import (
+	"context"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/mariuz/firebirdrest/internal/schema"
+)
+
+// Querier is satisfied by *sql.Tx and *sql.DB.
+type Querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// Obj is a JSON object that keeps its key order.
+type Obj struct {
+	Keys []string
+	Vals []any
+}
+
+func (o *Obj) Set(k string, v any) {
+	for i, key := range o.Keys {
+		if key == k {
+			o.Vals[i] = v
+			return
+		}
+	}
+	o.Keys = append(o.Keys, k)
+	o.Vals = append(o.Vals, v)
+}
+
+// MarshalJSON writes the object with keys in order.
+func (o *Obj) MarshalJSON() ([]byte, error) {
+	var sb strings.Builder
+	sb.WriteByte('{')
+	for i, k := range o.Keys {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		kb, _ := json.Marshal(k)
+		sb.Write(kb)
+		sb.WriteByte(':')
+		vb, err := json.Marshal(o.Vals[i])
+		if err != nil {
+			return nil, err
+		}
+		sb.Write(vb)
+	}
+	sb.WriteByte('}')
+	return []byte(sb.String()), nil
+}
+
+func marshalJSON(v any) (string, error) {
+	b, err := json.Marshal(v)
+	return string(b), err
+}
+
+// KeyFilter restricts a root read to specific key tuples and returns rows in that order.
+type KeyFilter struct {
+	Cols []string
+	Keys [][]any
+}
+
+const chunkSize = 400
+
+type row struct {
+	obj    *Obj
+	hidden []any // parent columns needed by each child, flattened
+	match  []any
+}
+
+// Read runs the read tree and returns the root objects.
+func Read(ctx context.Context, q Querier, n *ReadNode, kf *KeyFilter) ([]*Obj, error) {
+	if n.Limit == 0 {
+		return []*Obj{}, nil
+	}
+	var rows []*row
+	var err error
+	if kf != nil {
+		if len(kf.Keys) == 0 {
+			return []*Obj{}, nil
+		}
+		for _, chunk := range chunks(kf.Keys, chunkSize/len(kf.Cols)) {
+			part, err := queryNode(ctx, q, n, "t0", kf.Cols, chunk, false)
+			if err != nil {
+				return nil, err
+			}
+			rows = append(rows, part...)
+		}
+		// keep the order of the keys
+		pos := map[string]int{}
+		for i, k := range kf.Keys {
+			pos[keyString(k)] = i
+		}
+		ordered := make([]*row, len(kf.Keys))
+		for _, r := range rows {
+			if i, ok := pos[keyString(r.match)]; ok && ordered[i] == nil {
+				ordered[i] = r
+			}
+		}
+		rows = rows[:0]
+		for _, r := range ordered {
+			if r != nil {
+				rows = append(rows, r)
+			}
+		}
+	} else {
+		rows, err = queryNode(ctx, q, n, "t0", nil, nil, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := attachChildren(ctx, q, n, rows); err != nil {
+		return nil, err
+	}
+	out := make([]*Obj, len(rows))
+	for i, r := range rows {
+		out[i] = r.obj
+	}
+	return out, nil
+}
+
+// Count returns the number of rows matching the root conditions.
+func Count(ctx context.Context, q Querier, n *ReadNode) (int64, error) {
+	b := &Builder{}
+	b.W("SELECT COUNT(*) FROM ")
+	b.WriteFrom(n, "t0")
+	b.W(" WHERE ")
+	ok, err := b.WriteWhere(n, "t0", nil)
+	if err != nil {
+		return 0, err
+	}
+	sqlText := b.String()
+	if !ok {
+		sqlText = strings.TrimSuffix(sqlText, " WHERE ")
+	}
+	var c int64
+	rows, err := q.QueryContext(ctx, sqlText, b.Args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		if err := rows.Scan(&c); err != nil {
+			return 0, err
+		}
+	}
+	return c, rows.Err()
+}
+
+// Keys returns the given columns of rows matching the root conditions.
+func Keys(ctx context.Context, q Querier, n *ReadNode, cols []string) ([][]any, error) {
+	b := &Builder{}
+	b.W("SELECT ")
+	for i, c := range cols {
+		if i > 0 {
+			b.W(", ")
+		}
+		b.W(col("t0", c))
+	}
+	b.W(" FROM ")
+	b.WriteFrom(n, "t0")
+	b.W(" WHERE ")
+	ok, err := b.WriteWhere(n, "t0", nil)
+	if err != nil {
+		return nil, err
+	}
+	sqlText := b.String()
+	if !ok {
+		sqlText = strings.TrimSuffix(sqlText, " WHERE ")
+	}
+	rows, err := q.QueryContext(ctx, sqlText, b.Args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][]any
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		out = append(out, vals)
+	}
+	return out, rows.Err()
+}
+
+// queryNode runs one SELECT for node n. matchCols/keys restrict the rows
+// (for embedded children, or for re-reading written rows).
+func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchCols []string, keys [][]any, paging bool) ([]*row, error) {
+	b := &Builder{}
+	var sel []string
+	for _, f := range n.Fields {
+		sel = append(sel, FieldExpr(alias, f))
+	}
+	nHidden := 0
+	for _, c := range n.Children {
+		for _, pc := range c.Join.ParentCols {
+			sel = append(sel, col(alias, pc))
+			nHidden++
+		}
+	}
+	matchAlias := alias
+	if n.Join != nil && n.Join.Kind == ManyToMany && keys != nil && n.Path != "" {
+		matchAlias = "j0"
+	}
+	for _, mc := range matchCols {
+		sel = append(sel, col(matchAlias, mc))
+	}
+	if len(sel) == 0 {
+		sel = []string{"1"}
+	}
+	b.W("SELECT ", strings.Join(sel, ", "), " FROM ")
+	b.WriteFrom(n, alias)
+	if matchAlias == "j0" {
+		j := n.Join
+		b.W(" JOIN ", schema.Quote(j.Junction.DBName), " j0 ON ")
+		for i := range j.JChildCols {
+			if i > 0 {
+				b.W(" AND ")
+			}
+			b.W(col("j0", j.JChildCols[i]), " = ", col(alias, j.ChildRef[i]))
+		}
+	}
+	var extra func()
+	if keys != nil {
+		extra = func() { b.WriteKeyMatch(matchAlias, matchCols, keys) }
+	}
+	b.W(" WHERE ")
+	ok, err := b.WriteWhere(n, alias, extra)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		sqlText := strings.TrimSuffix(b.String(), " WHERE ")
+		b.sb.Reset()
+		b.sb.WriteString(sqlText)
+	}
+	b.WriteOrder(n, alias)
+	if paging {
+		b.WritePaging(n.Offset, n.Limit)
+	}
+
+	rs, err := q.QueryContext(ctx, b.String(), b.Args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	nf := len(n.Fields)
+	total := len(sel)
+	fieldCols := make([]*schema.Column, nf)
+	for i, f := range n.Fields {
+		fieldCols[i] = FieldColumn(f)
+	}
+	var out []*row
+	for rs.Next() {
+		vals := make([]any, total)
+		ptrs := make([]any, total)
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rs.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		r := &row{obj: &Obj{}}
+		for i, f := range n.Fields {
+			r.obj.Set(f.Key, Output(vals[i], fieldCols[i]))
+		}
+		r.hidden = vals[nf : nf+nHidden]
+		r.match = vals[nf+nHidden : nf+nHidden+len(matchCols)]
+		out = append(out, r)
+	}
+	return out, rs.Err()
+}
+
+// attachChildren fetches every embedded child of n for the given parent rows.
+func attachChildren(ctx context.Context, q Querier, n *ReadNode, parents []*row) error {
+	offset := 0
+	for _, c := range n.Children {
+		width := len(c.Join.ParentCols)
+		// distinct parent keys
+		seen := map[string]bool{}
+		var keys [][]any
+		for _, p := range parents {
+			k := p.hidden[offset : offset+width]
+			if hasNil(k) {
+				continue
+			}
+			ks := keyString(k)
+			if !seen[ks] {
+				seen[ks] = true
+				keys = append(keys, k)
+			}
+		}
+		groups := map[string][]*row{}
+		var all []*row
+		for _, chunk := range chunks(keys, chunkSize/width) {
+			rows, err := queryNode(ctx, q, c, "t0", c.Join.ChildCols, chunk, false)
+			if err != nil {
+				return err
+			}
+			for _, r := range rows {
+				ks := keyString(r.match)
+				groups[ks] = append(groups[ks], r)
+			}
+			all = append(all, rows...)
+		}
+		if err := attachChildren(ctx, q, c, all); err != nil {
+			return err
+		}
+		for _, p := range parents {
+			k := p.hidden[offset : offset+width]
+			g := groups[keyString(k)]
+			if hasNil(k) {
+				g = nil
+			}
+			if c.Offset > 0 {
+				if c.Offset >= len(g) {
+					g = nil
+				} else {
+					g = g[c.Offset:]
+				}
+			}
+			if c.Limit >= 0 && len(g) > c.Limit {
+				g = g[:c.Limit]
+			}
+			if c.Join.Single {
+				if len(g) == 0 {
+					p.obj.Set(c.Key, nil)
+				} else {
+					p.obj.Set(c.Key, g[0].obj)
+				}
+			} else {
+				objs := make([]*Obj, len(g))
+				for i, r := range g {
+					objs[i] = r.obj
+				}
+				p.obj.Set(c.Key, objs)
+			}
+		}
+		offset += width
+	}
+	return nil
+}
+
+func hasNil(k []any) bool {
+	for _, v := range k {
+		if v == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func keyString(k []any) string {
+	var sb strings.Builder
+	for i, v := range k {
+		if i > 0 {
+			sb.WriteByte(0)
+		}
+		switch x := v.(type) {
+		case []byte:
+			sb.Write(x)
+		case time.Time:
+			sb.WriteString(x.Format(time.RFC3339Nano))
+		case int, int16, int32:
+			fmt.Fprintf(&sb, "%d", x)
+		default:
+			fmt.Fprint(&sb, x)
+		}
+	}
+	return sb.String()
+}
+
+func chunks(keys [][]any, size int) [][][]any {
+	if size < 1 {
+		size = 1
+	}
+	var out [][][]any
+	for len(keys) > size {
+		out = append(out, keys[:size])
+		keys = keys[size:]
+	}
+	if len(keys) > 0 {
+		out = append(out, keys)
+	}
+	return out
+}
+
+// Output converts a value from the driver into its JSON form.
+func Output(v any, c *schema.Column) any {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []byte:
+		if (c != nil && c.IsBinary()) || !utf8.Valid(x) {
+			return base64.StdEncoding.EncodeToString(x)
+		}
+		return string(x)
+	case string:
+		if c != nil && (c.IsExactNumeric() || c.FieldType == schema.TInt128 ||
+			c.FieldType == schema.TDecfloat16 || c.FieldType == schema.TDecfloat34) {
+			s := strings.TrimSpace(x)
+			if json.Valid([]byte(s)) && s != "" && (s[0] == '-' || (s[0] >= '0' && s[0] <= '9')) {
+				return json.Number(s)
+			}
+		}
+		return x
+	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return fmt.Sprint(x)
+		}
+		return x
+	case float32:
+		return float64(x)
+	case time.Time:
+		ft := schema.TTimestamp
+		if c != nil {
+			ft = c.FieldType
+		}
+		switch ft {
+		case schema.TDate:
+			return x.Format("2006-01-02")
+		case schema.TTime:
+			return x.Format("15:04:05.9999")
+		case schema.TTimeTZ:
+			return x.Format("15:04:05.9999Z07:00")
+		case schema.TTimestampTZ:
+			return x.Format("2006-01-02T15:04:05.9999Z07:00")
+		}
+		return x.Format("2006-01-02T15:04:05.9999")
+	case int64, int32, int16, int, bool:
+		return x
+	}
+	return fmt.Sprint(v)
+}

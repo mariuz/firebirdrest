@@ -331,8 +331,8 @@ ORDER BY rf.RDB$RELATION_NAME, rf.RDB$FIELD_POSITION`)
 	return s, nil
 }
 
-// RDB$CONSTRAINT_TYPE is cast to VARCHAR because the Go driver cannot fetch
-// that CHAR column from Firebird 6 ("string right truncation").
+// RDB$CONSTRAINT_TYPE is cast to VARCHAR because Firebird 6 truncates that
+// CHARACTER SET NONE column for UTF8 clients ("string right truncation").
 func loadConstraints(ctx context.Context, db *sql.DB, s *Schema, byDB map[string]*Relation) error {
 	rows, err := db.QueryContext(ctx, `
 SELECT rc.RDB$RELATION_NAME, rc.RDB$CONSTRAINT_NAME, CAST(rc.RDB$CONSTRAINT_TYPE AS VARCHAR(20)),

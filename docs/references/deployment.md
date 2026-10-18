@@ -94,8 +94,9 @@ before the release. Firebird 6 adds SQL schemas; FirebirdREST serves the `PUBLIC
 
 Known issue with the current snapshot: text columns declared `CHARACTER SET NONE` (the default
 in a database created without `DEFAULT CHARACTER SET`) fail with *string right truncation*
-once a value is longer than a quarter of the column's size. The server misreports their length
-to clients that connect as UTF8, which FirebirdREST does by default. Until the snapshot is
+once a value is longer than a quarter of the column's size, when the client connects as UTF8
+(FirebirdREST's default). Firebird 6 reads the row buffer the driver asks for as UTF8 characters
+(4 bytes each) instead of bytes, as Firebird 5 does. Until the snapshot is
 fixed, either create the database with a character set:
 
 ```sql

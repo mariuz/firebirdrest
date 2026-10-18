@@ -22,8 +22,8 @@ jobs:
         experimental: [false]
         charset: [""]
         include:
-          # The snapshot misreports the length of CHARACTER SET NONE columns
-          # to UTF8 clients, so its database gets a real default charset.
+          # The snapshot truncates CHARACTER SET NONE columns for UTF8 clients
+          # that describe rows in BLR, so its database gets a real charset.
           - firebird: 6-snapshot
             experimental: true
             charset: UTF8

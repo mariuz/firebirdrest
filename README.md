@@ -19,9 +19,10 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 
 - **Single static binary** (Go, pure-Go wire protocol driver, no Firebird client library needed)
 - **PostgREST-compatible URL grammar**: `select`, filters, `or`/`and` trees, `order`, `limit`/`offset`, `Range`
-- **Resource embedding** through foreign keys: many-to-one, one-to-many, many-to-many, nested, `!inner`
+- **Resource embedding** through foreign keys: many-to-one, one-to-many, many-to-many, nested, `!inner`, spread (`...rel(cols)`)
+- **Aggregates**: `count()`, `sum()`, `avg()`, `min()`, `max()` with automatic grouping, also inside embeds
 - **Writes**: insert (single/bulk), upsert (`UPDATE OR INSERT` / `MERGE`), `PATCH`, `PUT`, `DELETE`, with `Prefer: return=representation`
-- **Stored procedures and PSQL functions** over `/rpc/…`
+- **Stored procedures and PSQL functions** over `/rpc/…`, including routines in **packages** (`/rpc/pkg.name`)
 - **Security through Firebird roles**: JWT `role` claim → Firebird `ROLE`; claims readable from PSQL with `RDB$GET_CONTEXT`
 - **OpenAPI 3** document at `/`
 - **Schema cache reload** on `POST_EVENT 'fbrest_reload'`, `SIGUSR1` or `POST /reload`
@@ -177,6 +178,34 @@ GET /books?select=title,tags(name)&tags=is.null           # books with no tags
 GET /books?select=title,tags(name)&tags=not.is.null
 ```
 
+A spread embed (`...`) merges the columns of a to-one resource into the parent object:
+
+```
+GET /books?select=title,...authors(author:name,country)
+[{"title":"Guards! Guards!","author":"Terry Pratchett","country":"UK"}, ...]
+```
+
+Keys appear in the order they are listed in `select`.
+
+#### Aggregates
+
+`count()`, `sum()`, `avg()`, `min()` and `max()` can be used in `select`. The other selected
+columns become the `GROUP BY`:
+
+```
+GET /books?select=count()                                    # [{"count":5}]
+GET /books?select=author_id,count(),total:price.sum(),price.avg()
+GET /books?select=in_stock,count()&order=in_stock
+GET /authors?select=name,books(count)                        # per-author count: "books":[{"count":2}]
+GET /authors?select=name,books(count(),price.sum())
+GET /books?select=price.sum()::text                          # casts apply to the result
+```
+
+The key is the function name (`count`, `sum`, …) unless you give an alias. Filters apply before
+grouping. With `Prefer: count=exact` the total is the number of groups. Firebird's own typing
+applies: `avg()` of an integer column is an integer. Disable aggregates with
+`db-aggregates-enabled = false`.
+
 ### Writing
 
 ```sh
@@ -227,6 +256,17 @@ curl 'localhost:3000/rpc/add_vat?amount=100'                            # -> 119
 Arguments are matched by name. Missing trailing arguments that have defaults get their default
 values. `GET` requests (including GET RPC) run in a **read-only transaction**.
 
+Public routines of a [package](https://firebirdsql.org/file/documentation/html/en/refdocs/fblangref50/firebird-50-language-reference.html#fblangref50-ddl-package)
+(declared in its header) are available as `/rpc/<package>.<routine>`. Private routines that exist
+only in the package body are not exposed:
+
+```sh
+curl 'localhost:3000/rpc/catalog.search?term=god'            # selectable procedure in package CATALOG
+curl 'localhost:3000/rpc/catalog.book_count?author_id=1'     # function in package CATALOG
+```
+
+Grant access with `GRANT EXECUTE ON PACKAGE catalog TO ROLE web_anon`.
+
 ### Response formats
 
 Choose with the `Accept` header:
@@ -267,6 +307,7 @@ Settings come from an optional config file (`firebirdrest app.conf`; see
 | `db-max-rows` | `FBREST_DB_MAX_ROWS` | `0` | cap on rows per read (0 = no cap) |
 | `db-pre-request` | `FBREST_DB_PRE_REQUEST` | none | executable procedure run before each request |
 | `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters |
+| `db-aggregates-enabled` | `FBREST_DB_AGGREGATES_ENABLED` | `true` | allow `count()`, `sum()`, … in `select` |
 | `db-reload-event` | `FBREST_DB_RELOAD_EVENT` | `fbrest_reload` | `POST_EVENT` that reloads the schema cache |
 | `jwt-secret` | `FBREST_JWT_SECRET` | none | HMAC secret, or PEM public key |
 | `jwt-aud` | `FBREST_JWT_AUD` | none | required `aud` claim |
@@ -306,9 +347,10 @@ SET TERM ;^
 FirebirdREST borrows PostgREST's interface, but Firebird is not PostgreSQL:
 
 - Firebird has no schemas, so all tables/views/routines are in one namespace (`/table`, `/rpc/name`).
-  Packaged routines are not exposed yet.
+  Packaged routines use `/rpc/package.name`.
 - No JSON operators (`->`, `->>`), array or range operators, or full-text `fts`. Firebird-specific `containing`, `starting` and `similar` are added instead.
-- Aggregates (`select=count()`), spread embeds (`...rel(...)`) and computed relationships are not implemented yet.
+- Spread embeds only work on to-one relationships. Computed relationships are not implemented yet.
+- Aggregates are on by default (PostgREST ships with them off).
 - Embedded children are fetched with one batched `IN (...)` query per embed level instead of a single
   SQL statement. Per-parent `limit`/`offset` on embeds is applied after fetching.
 - A request cannot change roles mid-transaction, so each role gets its own connection pool.

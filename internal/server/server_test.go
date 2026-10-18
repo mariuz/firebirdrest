@@ -31,7 +31,7 @@ func testServer(t *testing.T) *httptest.Server {
 	if uri == "" {
 		t.Skip("FBREST_TEST_DB_URI not set")
 	}
-	cfg := &config.Config{DBURI: uri, DBAnonRole: "web_anon", DBPool: 4, DBSafeUpdates: true,
+	cfg := &config.Config{DBURI: uri, DBAnonRole: "web_anon", DBPool: 4, DBSafeUpdates: true, DBAggregates: true,
 		JWTSecret: testSecret, JWTRoleClaim: "role", CORSOrigins: "*"}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s, err := New(context.Background(), cfg, log)
@@ -107,6 +107,17 @@ func TestRead(t *testing.T) {
 		{"/books_with_authors?select=title&author=eq.Stanislaw%20Lem", `[{"title":"Solaris"}]`},
 		{"/rpc/books_by_country?country=Poland&select=title", `[{"title":"Solaris"}]`},
 		{"/rpc/add_vat?amount=100&rate=10", `110.00`},
+		// aggregates
+		{"/books?select=count()", `[{"count":5}]`},
+		{"/books?select=author_id,n:count(),price.sum()&order=author_id", `[{"author_id":1,"n":2,"sum":18.49},{"author_id":2,"n":2,"sum":19.25},{"author_id":3,"n":1,"sum":10.40}]`},
+		{"/authors?select=name,books(count)&id=eq.2", `[{"name":"Ursula K. Le Guin","books":[{"count":2}]}]`},
+		{"/books?select=published.min(),published.max()", `[{"min":1961,"max":1992}]`},
+		// spread embeds and select order
+		{"/books?select=title,...authors(author:name)&id=eq.5", `[{"title":"Solaris","author":"Stanislaw Lem"}]`},
+		{"/books?select=authors(name),id&id=eq.5", `[{"authors":{"name":"Stanislaw Lem"},"id":5}]`},
+		// packaged routines
+		{"/rpc/catalog.search?term=god", `[{"id":2,"title":"Small Gods"}]`},
+		{"/rpc/catalog.book_count?author_id=2", `2`},
 	}
 	for _, c := range cases {
 		r := do(t, ts, "GET", c.path, "")
@@ -115,6 +126,26 @@ func TestRead(t *testing.T) {
 			continue
 		}
 		jsonEq(t, r.body, c.want)
+	}
+}
+
+func TestAggregateEdgeCases(t *testing.T) {
+	ts := testServer(t)
+	user := "Bearer " + token(t, jwt.MapClaims{"role": "web_user"})
+	// an author without books gets a zero count; a book without author gets null spread columns
+	r := do(t, ts, "POST", "/authors?select=name,books(count)", `{"name":"Nobody"}`,
+		"Authorization", user, "Prefer", "return=representation", "Prefer", "tx=rollback")
+	jsonEq(t, r.body, `[{"name":"Nobody","books":[{"count":0}]}]`)
+	r = do(t, ts, "POST", "/books?select=title,...authors(name)", `{"title":"Anonymous"}`,
+		"Authorization", user, "Prefer", "return=representation", "Prefer", "tx=rollback")
+	jsonEq(t, r.body, `[{"title":"Anonymous","name":null}]`)
+	// count=exact counts groups
+	r = do(t, ts, "GET", "/books?select=in_stock,count()", "", "Prefer", "count=exact")
+	if got := r.header.Get("Content-Range"); got != "0-1/2" {
+		t.Errorf("content-range %q", got)
+	}
+	if r := do(t, ts, "GET", "/rpc/catalog.internal_helper", ""); r.status != 404 {
+		t.Errorf("private package function exposed: %d", r.status)
 	}
 }
 

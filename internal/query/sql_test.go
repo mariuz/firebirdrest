@@ -129,3 +129,25 @@ func TestMaxRows(t *testing.T) {
 		t.Errorf("limit %d", n.Limit)
 	}
 }
+
+func TestSpreadAndLayout(t *testing.T) {
+	n := build(t, "books", "select=authors(name),title,...authors!fk_book_author(id)")
+	if got := n.OutKeys(); strings.Join(got, ",") != "authors,title,id" {
+		t.Errorf("keys %v", got)
+	}
+	sc := testSchema()
+	v, _ := url.ParseQuery("select=name,...books(title)")
+	p, _ := ParseQuery(v, nil)
+	if _, err := BuildRead(sc, sc.Relations["authors"], p, 0); err == nil {
+		t.Error("to-many spread accepted")
+	}
+}
+
+func TestAggregatesDisabled(t *testing.T) {
+	sc := testSchema()
+	p, _ := ParseQuery(url.Values{"select": {"count()"}}, nil)
+	p.NoAggregates = true
+	if _, err := BuildRead(sc, sc.Relations["books"], p, 0); err == nil {
+		t.Error("aggregate accepted while disabled")
+	}
+}

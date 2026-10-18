@@ -14,7 +14,12 @@ import (
 var urlParseQuery = url.ParseQuery
 
 func (s *Server) params(rc *reqCtx, isArg func(string) bool) (*query.Params, error) {
-	return query.ParseQuery(rc.r.URL.Query(), isArg)
+	p, err := query.ParseQuery(rc.r.URL.Query(), isArg)
+	if err != nil {
+		return nil, err
+	}
+	p.NoAggregates = !s.cfg.DBAggregates
+	return p, nil
 }
 
 // applyRange applies a "Range: 0-24" header to the root node.

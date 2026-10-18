@@ -59,8 +59,9 @@ const (
 
 // Routine is a stored procedure or a PSQL function.
 type Routine struct {
-	Name        string
+	Name        string // "proc", or "pkg.proc" for packaged routines
 	DBName      string
+	Package     string // DB name of the package, "" when standalone
 	Kind        string
 	Description string
 	In          []*Column
@@ -134,7 +135,11 @@ func (s *Schema) Routine(name string) *Routine {
 		return r
 	}
 	for _, r := range s.Routines {
-		if r.DBName == name {
+		full := r.DBName
+		if r.Package != "" {
+			full = r.Package + "." + r.DBName
+		}
+		if full == name {
 			return r
 		}
 	}
@@ -159,6 +164,23 @@ func (s *Schema) RoutineNames() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// SQLName is the quoted name used to call the routine.
+func (r *Routine) SQLName() string {
+	if r.Package != "" {
+		return Quote(r.Package) + "." + Quote(r.DBName)
+	}
+	return Quote(r.DBName)
+}
+
+func routineKey(pkg, name string) string { return pkg + "\x00" + name }
+
+func routineName(pkg, name string) string {
+	if pkg == "" {
+		return APIName(name)
+	}
+	return APIName(pkg) + "." + APIName(name)
 }
 
 // AsRelation exposes the outputs of a selectable procedure as a relation so
@@ -339,54 +361,53 @@ ORDER BY rc.RDB$CONSTRAINT_NAME, seg.RDB$FIELD_POSITION`)
 
 func loadProcedures(ctx context.Context, db *sql.DB, s *Schema) error {
 	rows, err := db.QueryContext(ctx, `
-SELECT p.RDB$PROCEDURE_NAME, COALESCE(p.RDB$PROCEDURE_TYPE, 2), p.RDB$DESCRIPTION
+SELECT p.RDB$PACKAGE_NAME, p.RDB$PROCEDURE_NAME, COALESCE(p.RDB$PROCEDURE_TYPE, 2), p.RDB$DESCRIPTION
 FROM RDB$PROCEDURES p
-WHERE COALESCE(p.RDB$SYSTEM_FLAG, 0) = 0 AND p.RDB$PACKAGE_NAME IS NULL`)
+WHERE COALESCE(p.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(p.RDB$PRIVATE_FLAG, 0) = 0`)
 	if err != nil {
 		return fmt.Errorf("reading procedures: %w", err)
 	}
 	byDB := map[string]*Routine{}
 	for rows.Next() {
-		var name sql.NullString
+		var pkg, name sql.NullString
 		var typ int
 		var desc any
-		if err := rows.Scan(&name, &typ, &desc); err != nil {
+		if err := rows.Scan(&pkg, &name, &typ, &desc); err != nil {
 			rows.Close()
 			return err
 		}
-		r := &Routine{DBName: trim(name), Kind: Executable, Description: blobText(desc)}
+		r := &Routine{DBName: trim(name), Package: trim(pkg), Kind: Executable, Description: blobText(desc)}
 		if typ == 1 {
 			r.Kind = Selectable
 		}
-		r.Name = APIName(r.DBName)
-		byDB[r.DBName] = r
+		r.Name = routineName(r.Package, r.DBName)
+		byDB[routineKey(r.Package, r.DBName)] = r
 		s.Routines[r.Name] = r
 	}
 	rows.Close()
 
 	rows, err = db.QueryContext(ctx, `
-SELECT pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_NAME, pp.RDB$PARAMETER_TYPE, pp.RDB$PARAMETER_NUMBER,
+SELECT pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_NAME, pp.RDB$PARAMETER_TYPE, pp.RDB$PARAMETER_NUMBER,
        f.RDB$FIELD_TYPE, COALESCE(f.RDB$FIELD_SUB_TYPE, 0), COALESCE(f.RDB$FIELD_SCALE, 0),
        COALESCE(f.RDB$FIELD_LENGTH, 0), COALESCE(f.RDB$CHARACTER_LENGTH, 0),
        COALESCE(f.RDB$FIELD_PRECISION, 0),
        pp.RDB$DEFAULT_SOURCE IS NOT NULL OR f.RDB$DEFAULT_SOURCE IS NOT NULL
 FROM RDB$PROCEDURE_PARAMETERS pp
 JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = pp.RDB$FIELD_SOURCE
-WHERE pp.RDB$PACKAGE_NAME IS NULL
-ORDER BY pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.RDB$PARAMETER_NUMBER`)
+ORDER BY pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.RDB$PARAMETER_NUMBER`)
 	if err != nil {
 		return fmt.Errorf("reading procedure parameters: %w", err)
 	}
 	for rows.Next() {
-		var proc, name sql.NullString
+		var pkg, proc, name sql.NullString
 		var ptype, num int
 		c := &Column{Nullable: true}
-		if err := rows.Scan(&proc, &name, &ptype, &num, &c.FieldType, &c.SubType, &c.Scale,
+		if err := rows.Scan(&pkg, &proc, &name, &ptype, &num, &c.FieldType, &c.SubType, &c.Scale,
 			&c.Length, &c.CharLength, &c.Precision, &c.HasDefault); err != nil {
 			rows.Close()
 			return err
 		}
-		r := byDB[trim(proc)]
+		r := byDB[routineKey(trim(pkg), trim(proc))]
 		if r == nil {
 			continue
 		}
@@ -405,9 +426,9 @@ ORDER BY pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.RDB$PARAMETER_NUMBER`)
 
 func loadFunctions(ctx context.Context, db *sql.DB, s *Schema) error {
 	rows, err := db.QueryContext(ctx, `
-SELECT fn.RDB$FUNCTION_NAME, COALESCE(fn.RDB$RETURN_ARGUMENT, 0), fn.RDB$DESCRIPTION
+SELECT fn.RDB$PACKAGE_NAME, fn.RDB$FUNCTION_NAME, COALESCE(fn.RDB$RETURN_ARGUMENT, 0), fn.RDB$DESCRIPTION
 FROM RDB$FUNCTIONS fn
-WHERE COALESCE(fn.RDB$SYSTEM_FLAG, 0) = 0 AND fn.RDB$PACKAGE_NAME IS NULL
+WHERE COALESCE(fn.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(fn.RDB$PRIVATE_FLAG, 0) = 0
   AND fn.RDB$MODULE_NAME IS NULL`)
 	if err != nil {
 		// Firebird 2.5 has no PSQL functions; ignore.
@@ -416,26 +437,27 @@ WHERE COALESCE(fn.RDB$SYSTEM_FLAG, 0) = 0 AND fn.RDB$PACKAGE_NAME IS NULL
 	byDB := map[string]*Routine{}
 	retPos := map[string]int{}
 	for rows.Next() {
-		var name sql.NullString
+		var pkg, name sql.NullString
 		var ret int
 		var desc any
-		if err := rows.Scan(&name, &ret, &desc); err != nil {
+		if err := rows.Scan(&pkg, &name, &ret, &desc); err != nil {
 			rows.Close()
 			return err
 		}
-		r := &Routine{DBName: trim(name), Kind: Function, Description: blobText(desc)}
-		r.Name = APIName(r.DBName)
+		r := &Routine{DBName: trim(name), Package: trim(pkg), Kind: Function, Description: blobText(desc)}
+		r.Name = routineName(r.Package, r.DBName)
 		if _, clash := s.Routines[r.Name]; clash {
 			continue
 		}
-		byDB[r.DBName] = r
-		retPos[r.DBName] = ret
+		k := routineKey(r.Package, r.DBName)
+		byDB[k] = r
+		retPos[k] = ret
 		s.Routines[r.Name] = r
 	}
 	rows.Close()
 
 	rows, err = db.QueryContext(ctx, `
-SELECT a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_NAME, a.RDB$ARGUMENT_POSITION,
+SELECT a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_NAME, a.RDB$ARGUMENT_POSITION,
        COALESCE(f.RDB$FIELD_TYPE, a.RDB$FIELD_TYPE), COALESCE(f.RDB$FIELD_SUB_TYPE, a.RDB$FIELD_SUB_TYPE, 0),
        COALESCE(f.RDB$FIELD_SCALE, a.RDB$FIELD_SCALE, 0),
        COALESCE(f.RDB$FIELD_LENGTH, a.RDB$FIELD_LENGTH, 0),
@@ -444,30 +466,30 @@ SELECT a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_NAME, a.RDB$ARGUMENT_POSITION,
        a.RDB$DEFAULT_SOURCE IS NOT NULL
 FROM RDB$FUNCTION_ARGUMENTS a
 LEFT JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = a.RDB$FIELD_SOURCE
-WHERE a.RDB$PACKAGE_NAME IS NULL
-ORDER BY a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_POSITION`)
+ORDER BY a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_POSITION`)
 	if err != nil {
 		return fmt.Errorf("reading function arguments: %w", err)
 	}
 	for rows.Next() {
-		var fn, name sql.NullString
+		var pkg, fn, name sql.NullString
 		var pos int
 		var ft sql.NullInt64
 		c := &Column{Nullable: true}
-		if err := rows.Scan(&fn, &name, &pos, &ft, &c.SubType, &c.Scale, &c.Length,
+		if err := rows.Scan(&pkg, &fn, &name, &pos, &ft, &c.SubType, &c.Scale, &c.Length,
 			&c.CharLength, &c.Precision, &c.HasDefault); err != nil {
 			rows.Close()
 			return err
 		}
-		r := byDB[trim(fn)]
+		k := routineKey(trim(pkg), trim(fn))
+		r := byDB[k]
 		if r == nil {
 			continue
 		}
 		c.FieldType = int(ft.Int64)
 		c.DBName = trim(name)
 		c.Position = pos
-		if pos == retPos[r.DBName] {
-			c.Name, c.DBName = r.Name, "RESULT"
+		if pos == retPos[k] {
+			c.Name, c.DBName = APIName(r.DBName), "RESULT"
 			r.Out = []*Column{c}
 		} else {
 			c.Name = APIName(c.DBName)

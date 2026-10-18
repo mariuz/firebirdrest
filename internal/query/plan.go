@@ -16,10 +16,14 @@ const (
 
 // Field is one output column.
 type Field struct {
-	Col  *schema.Column
+	Col  *schema.Column // nil for count()
 	Key  string
 	Cast string // Firebird cast target, already validated
+	Agg  string // count, sum, avg, min, max
 }
+
+// countColumn describes the result of count().
+var countColumn = &schema.Column{Name: "count", FieldType: schema.TBigint}
 
 // Join describes how a child node relates to its parent.
 type Join struct {
@@ -48,6 +52,34 @@ type ReadNode struct {
 	Children []*ReadNode
 	Join     *Join
 	Inner    bool
+	Spread   bool  // merge this (to-one) child's keys into the parent object
+	Layout   []int // output order: i >= 0 is Fields[i], i < 0 is Children[-i-1]
+}
+
+// HasAggregates reports whether any selected field is an aggregate.
+func (n *ReadNode) HasAggregates() bool {
+	for _, f := range n.Fields {
+		if f.Agg != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// OutKeys lists the JSON keys this node produces, in output order.
+// A spread child contributes its own keys.
+func (n *ReadNode) OutKeys() []string {
+	var out []string
+	for _, i := range n.Layout {
+		if i >= 0 {
+			out = append(out, n.Fields[i].Key)
+		} else if c := n.Children[-i-1]; c.Spread {
+			out = append(out, c.OutKeys()...)
+		} else {
+			out = append(out, c.Key)
+		}
+	}
+	return out
 }
 
 // castTypes maps the cast names accepted in select=col::type to Firebird types.
@@ -142,6 +174,10 @@ func resolveNode(s *schema.Schema, n *ReadNode, sel []*SelectItem, p *Params, pa
 	}
 	n.Offset = p.Offset[path]
 
+	addField := func(f Field) {
+		n.Layout = append(n.Layout, len(n.Fields))
+		n.Fields = append(n.Fields, f)
+	}
 	for _, item := range sel {
 		if item.Embed {
 			child, err := resolveEmbed(s, n, item)
@@ -155,13 +191,51 @@ func resolveNode(s *schema.Schema, n *ReadNode, sel []*SelectItem, p *Params, pa
 			if err := resolveNode(s, child, item.Children, p, childPath); err != nil {
 				return err
 			}
+			if item.Spread {
+				if !child.Join.Single {
+					return badRequest("FBRST119", "spread (...%s) only works on to-one relationships", item.Name)
+				}
+				child.Spread = true
+			}
 			n.Children = append(n.Children, child)
+			n.Layout = append(n.Layout, -len(n.Children))
 			continue
 		}
 		if item.Name == "*" {
 			for _, c := range n.Rel.Columns {
-				n.Fields = append(n.Fields, Field{Col: c, Key: c.Name})
+				addField(Field{Col: c, Key: c.Name})
 			}
+			continue
+		}
+		// "count" inside an embed, as in authors?select=name,books(count)
+		if item.Agg == "" && item.Name == "count" && item.Cast == "" && n.Rel.Column("count") == nil {
+			item = &SelectItem{Agg: "count", Alias: item.Alias}
+		}
+		if item.Agg != "" {
+			if p.NoAggregates {
+				return &Error{Status: 400, Code: "FBRST123", Message: "use of aggregate functions is disabled",
+					Hint: "set db-aggregates-enabled = true"}
+			}
+			f := Field{Agg: item.Agg, Key: item.Key(), Col: countColumn}
+			if item.Name != "" {
+				c := n.Rel.Column(item.Name)
+				if c == nil {
+					return &Error{Status: 400, Code: "FBRST204",
+						Message: fmt.Sprintf("column %q does not exist in %q", item.Name, n.Rel.Name)}
+				}
+				if item.Agg != "count" {
+					f.Col = c
+				} else {
+					f.Col = &schema.Column{Name: c.Name, DBName: c.DBName, FieldType: schema.TBigint}
+				}
+			}
+			if item.Cast != "" {
+				if _, ok := castTypes[item.Cast]; !ok {
+					return badRequest("FBRST104", "unsupported cast %q", item.Cast)
+				}
+				f.Cast = item.Cast
+			}
+			addField(f)
 			continue
 		}
 		c := n.Rel.Column(item.Name)
@@ -179,7 +253,7 @@ func resolveNode(s *schema.Schema, n *ReadNode, sel []*SelectItem, p *Params, pa
 			}
 			f.Cast = item.Cast
 		}
-		n.Fields = append(n.Fields, f)
+		addField(f)
 	}
 	for _, o := range n.Order {
 		if n.Rel.Column(o.Field) == nil {

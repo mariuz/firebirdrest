@@ -80,7 +80,7 @@ func (s *Server) rpc(rc *reqCtx, rt *schema.Routine) error {
 			break
 		}
 	}
-	call := schema.Quote(rt.DBName)
+	call := rt.SQLName()
 	if len(vals) > 0 || rt.Kind == schema.Function {
 		call += "(" + placeholders(len(vals)) + ")"
 	}

@@ -129,9 +129,29 @@ func Read(ctx context.Context, q Querier, n *ReadNode, kf *KeyFilter) ([]*Obj, e
 }
 
 // Count returns the number of rows matching the root conditions.
+// With aggregates it counts the groups.
 func Count(ctx context.Context, q Querier, n *ReadNode) (int64, error) {
+	var group []string
+	if n.HasAggregates() {
+		for _, f := range n.Fields {
+			if f.Agg == "" {
+				group = append(group, FieldExpr("t0", f))
+			}
+		}
+		if len(group) == 0 {
+			return 1, nil // a single summary row
+		}
+	}
 	b := &Builder{}
-	b.W("SELECT COUNT(*) FROM ")
+	if group != nil {
+		named := make([]string, len(group))
+		for i, g := range group {
+			named[i] = fmt.Sprintf("%s AS c%d", g, i)
+		}
+		b.W("SELECT COUNT(*) FROM (SELECT ", strings.Join(named, ", "), " FROM ")
+	} else {
+		b.W("SELECT COUNT(*) FROM ")
+	}
 	b.WriteFrom(n, "t0")
 	b.W(" WHERE ")
 	ok, err := b.WriteWhere(n, "t0", nil)
@@ -141,6 +161,9 @@ func Count(ctx context.Context, q Querier, n *ReadNode) (int64, error) {
 	sqlText := b.String()
 	if !ok {
 		sqlText = strings.TrimSuffix(sqlText, " WHERE ")
+	}
+	if group != nil {
+		sqlText += " GROUP BY " + strings.Join(group, ", ") + ") g"
 	}
 	var c int64
 	rows, err := q.QueryContext(ctx, sqlText, b.Args...)
@@ -248,6 +271,19 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		b.sb.Reset()
 		b.sb.WriteString(sqlText)
 	}
+	if n.HasAggregates() {
+		// group by every selected plain column plus the join keys
+		var group []string
+		for i, f := range n.Fields {
+			if f.Agg == "" {
+				group = append(group, sel[i])
+			}
+		}
+		group = append(group, sel[len(n.Fields):]...)
+		if len(group) > 0 {
+			b.W(" GROUP BY ", strings.Join(group, ", "))
+		}
+	}
 	b.WriteOrder(n, alias)
 	if paging {
 		b.WritePaging(n.Offset, n.Limit)
@@ -274,7 +310,7 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		if err := rs.Scan(ptrs...); err != nil {
 			return nil, err
 		}
-		r := &row{obj: &Obj{}}
+		r := &row{obj: newObj(n)}
 		for i, f := range n.Fields {
 			r.obj.Set(f.Key, Output(vals[i], fieldCols[i]))
 		}
@@ -283,6 +319,33 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		out = append(out, r)
 	}
 	return out, rs.Err()
+}
+
+// newObj creates an object with every output key of n in select order, so
+// fields and embeds keep the order they were requested in.
+func newObj(n *ReadNode) *Obj {
+	keys := n.OutKeys()
+	return &Obj{Keys: keys, Vals: make([]any, len(keys))}
+}
+
+// emptyAggregate is the value of an aggregate-only embed with no rows,
+// e.g. {"count":0} for books(count) of an author without books.
+func emptyAggregate(c *ReadNode) *Obj {
+	for _, f := range c.Fields {
+		if f.Agg == "" {
+			return nil
+		}
+	}
+	if len(c.Children) > 0 || len(c.Fields) == 0 {
+		return nil
+	}
+	o := newObj(c)
+	for _, f := range c.Fields {
+		if f.Agg == "count" {
+			o.Set(f.Key, int64(0))
+		}
+	}
+	return o
 }
 
 // attachChildren fetches every embedded child of n for the given parent rows.
@@ -336,16 +399,28 @@ func attachChildren(ctx context.Context, q Querier, n *ReadNode, parents []*row)
 			if c.Limit >= 0 && len(g) > c.Limit {
 				g = g[:c.Limit]
 			}
-			if c.Join.Single {
+			switch {
+			case c.Spread:
+				if len(g) > 0 {
+					for i, k := range g[0].obj.Keys {
+						p.obj.Set(k, g[0].obj.Vals[i])
+					}
+				} // otherwise the placeholders stay null
+			case c.Join.Single:
 				if len(g) == 0 {
 					p.obj.Set(c.Key, nil)
 				} else {
 					p.obj.Set(c.Key, g[0].obj)
 				}
-			} else {
+			default:
 				objs := make([]*Obj, len(g))
 				for i, r := range g {
 					objs[i] = r.obj
+				}
+				if len(objs) == 0 {
+					if e := emptyAggregate(c); e != nil {
+						objs = append(objs, e)
+					}
 				}
 				p.obj.Set(c.Key, objs)
 			}

@@ -17,6 +17,7 @@ type Config struct {
 	DBMaxRows       int
 	DBPreRequest    string // executable procedure run before each request
 	DBSafeUpdates   bool   // reject PATCH/DELETE without filters
+	DBAggregates    bool   // allow count()/sum()/avg()/min()/max() in select
 	DBReloadEvent   string // POST_EVENT name that triggers a schema reload
 	JWTSecret       string // HMAC secret, or PEM encoded RSA/ECDSA public key
 	JWTAudience     string
@@ -37,6 +38,7 @@ var keys = map[string]string{
 	"db-max-rows":                 "FBREST_DB_MAX_ROWS",
 	"db-pre-request":              "FBREST_DB_PRE_REQUEST",
 	"db-safe-updates":             "FBREST_DB_SAFE_UPDATES",
+	"db-aggregates-enabled":       "FBREST_DB_AGGREGATES_ENABLED",
 	"db-reload-event":             "FBREST_DB_RELOAD_EVENT",
 	"jwt-secret":                  "FBREST_JWT_SECRET",
 	"jwt-aud":                     "FBREST_JWT_AUD",
@@ -133,10 +135,18 @@ func Load(path string) (*Config, error) {
 	if c.AdminPort, err = geti("FBREST_ADMIN_SERVER_PORT", 0); err != nil {
 		return nil, err
 	}
-	safe := strings.ToLower(get("FBREST_DB_SAFE_UPDATES", "true"))
-	c.DBSafeUpdates = safe != "false" && safe != "0" && safe != "off"
+	c.DBSafeUpdates = isTrue(get("FBREST_DB_SAFE_UPDATES", "true"))
+	c.DBAggregates = isTrue(get("FBREST_DB_AGGREGATES_ENABLED", "true"))
 	if c.DBURI == "" {
 		return nil, fmt.Errorf("db-uri (FBREST_DB_URI) is required, e.g. user:password@localhost:3050/var/lib/firebird/data/app.fdb")
 	}
 	return c, nil
+}
+
+func isTrue(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "false", "0", "off", "no":
+		return false
+	}
+	return true
 }

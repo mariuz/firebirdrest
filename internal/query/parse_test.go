@@ -133,3 +133,46 @@ func TestParseQuery(t *testing.T) {
 		t.Error("negative limit accepted")
 	}
 }
+
+func TestParseAggregates(t *testing.T) {
+	items, err := ParseSelect("author_id,count(),total:price.sum(),price.avg()::text,books(count),orders(id)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := func(i int) SelectItem { return *items[i] }
+	if c := got(1); c.Agg != "count" || c.Name != "" || c.Key() != "count" {
+		t.Errorf("count(): %+v", c)
+	}
+	if s := got(2); s.Agg != "sum" || s.Name != "price" || s.Key() != "total" {
+		t.Errorf("sum: %+v", s)
+	}
+	if a := got(3); a.Agg != "avg" || a.Cast != "text" || a.Key() != "avg" {
+		t.Errorf("avg: %+v", a)
+	}
+	if e := got(4); !e.Embed || e.Children[0].Name != "count" {
+		t.Errorf("books(count): %+v", e)
+	}
+	if e := got(5); !e.Embed || e.Agg != "" {
+		t.Errorf("orders(id): %+v", e)
+	}
+	for _, bad := range []string{"price.median()", "sum()"} {
+		if _, err := ParseSelect(bad); err == nil {
+			t.Errorf("%q: expected error", bad)
+		}
+	}
+}
+
+func TestParseSpread(t *testing.T) {
+	items, err := ParseSelect("title,...authors(name,country)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := items[1]; !s.Spread || !s.Embed || s.Name != "authors" {
+		t.Errorf("spread: %+v", s)
+	}
+	for _, bad := range []string{"...title", "...a:authors(name)"} {
+		if _, err := ParseSelect(bad); err == nil {
+			t.Errorf("%q: expected error", bad)
+		}
+	}
+}

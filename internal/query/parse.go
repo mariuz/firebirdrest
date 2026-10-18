@@ -13,11 +13,14 @@ import (
 // SelectItem is one entry of the select= parameter.
 //
 //	select=id,full_name:name,price::text,author(name),orders!fk_orders_customer!inner(id,total)
+//	select=author_id,count(),total:price.sum(),...authors(name)
 type SelectItem struct {
 	Name     string
 	Alias    string
 	Cast     string
+	Agg      string // count, sum, avg, min, max ("" when not an aggregate)
 	Embed    bool
+	Spread   bool // ...embed(cols): merge the child's columns into the parent
 	Hint     string
 	Inner    bool
 	Children []*SelectItem
@@ -28,8 +31,13 @@ func (s *SelectItem) Key() string {
 	if s.Alias != "" {
 		return s.Alias
 	}
+	if s.Agg != "" {
+		return s.Agg
+	}
 	return s.Name
 }
+
+var aggregates = map[string]bool{"count": true, "sum": true, "avg": true, "min": true, "max": true}
 
 // Filter is a single condition such as id=gt.5 or name=not.ilike.*bird*.
 type Filter struct {
@@ -66,6 +74,8 @@ type Params struct {
 	Columns    []string
 	OnConflict []string
 	Args       map[string]string // RPC arguments taken from the query string
+	// NoAggregates rejects count()/sum()/... in select (db-aggregates-enabled = false).
+	NoAggregates bool
 }
 
 // Error is a request error with an HTTP status.
@@ -326,7 +336,14 @@ func ParseSelect(s string) ([]*SelectItem, error) {
 }
 
 func parseSelectItem(raw string) (*SelectItem, error) {
+	if item, ok, err := parseAggregate(raw); ok || err != nil {
+		return item, err
+	}
 	item := &SelectItem{}
+	if strings.HasPrefix(raw, "...") {
+		item.Spread = true
+		raw = raw[3:]
+	}
 	head := raw
 	if i := indexTop(raw, '('); i >= 0 {
 		if !strings.HasSuffix(raw, ")") {
@@ -366,7 +383,44 @@ func parseSelectItem(raw string) (*SelectItem, error) {
 	if !item.Embed && (item.Hint != "" || item.Inner) {
 		return nil, badRequest("FBRST103", "hints are only allowed on embedded resources: %q", raw)
 	}
+	if item.Spread && (!item.Embed || item.Alias != "") {
+		return nil, badRequest("FBRST103", "spread (...) needs an embedded resource without an alias: %q", raw)
+	}
 	return item, nil
+}
+
+// parseAggregate recognises [alias:][column.]fn()[::cast]. ok is false when
+// raw is not an aggregate.
+func parseAggregate(raw string) (*SelectItem, bool, error) {
+	head, cast := raw, ""
+	if i := strings.LastIndex(raw, "::"); i >= 0 && !strings.Contains(raw[i:], ")") {
+		head, cast = raw[:i], strings.ToLower(strings.TrimSpace(raw[i+2:]))
+	}
+	if !strings.HasSuffix(head, "()") {
+		return nil, false, nil
+	}
+	item := &SelectItem{Cast: cast}
+	if i := indexAlias(head); i >= 0 {
+		item.Alias = unquote(head[:i])
+		head = head[i+1:]
+	}
+	head = strings.TrimSuffix(head, "()")
+	fn := head
+	if i := strings.LastIndexByte(head, '.'); i >= 0 {
+		item.Name, fn = unquote(head[:i]), head[i+1:]
+	}
+	if !aggregates[fn] {
+		if strings.ContainsAny(fn, "!\"") || item.Name == "" && !strings.Contains(raw, ".") {
+			// e.g. "orders()" is an (empty) embed, not an aggregate
+			return nil, false, nil
+		}
+		return nil, true, badRequest("FBRST103", "unknown aggregate %q (use count, sum, avg, min or max)", fn)
+	}
+	if item.Name == "" && fn != "count" {
+		return nil, true, badRequest("FBRST103", "%s() needs a column, e.g. price.%s()", fn, fn)
+	}
+	item.Agg = fn
+	return item, true, nil
 }
 
 func indexAlias(s string) int {

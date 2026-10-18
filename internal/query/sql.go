@@ -39,7 +39,15 @@ func col(alias, dbName string) string { return alias + "." + schema.Quote(dbName
 
 // FieldExpr returns the SQL for a selected field.
 func FieldExpr(alias string, f Field) string {
-	e := col(alias, f.Col.DBName)
+	var e string
+	switch {
+	case f.Agg == "count" && f.Col.DBName == "":
+		e = "COUNT(*)"
+	case f.Agg != "":
+		e = strings.ToUpper(f.Agg) + "(" + col(alias, f.Col.DBName) + ")"
+	default:
+		e = col(alias, f.Col.DBName)
+	}
 	if f.Cast != "" {
 		e = "CAST(" + e + " AS " + castTypes[f.Cast] + ")"
 	}

@@ -29,7 +29,8 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 - **Security through Firebird roles**: JWT `role` claim → Firebird `ROLE`; claims readable from PSQL with `RDB$GET_CONTEXT`
 - **OpenAPI 3** document at `/`
 - **Schema cache reload** on `POST_EVENT 'fbrest_reload'`, `SIGUSR1` or `POST /reload`
-- Works with Firebird **3, 4 and 5** (the integration suite runs against all three)
+- Works with Firebird **3, 4 and 5** (the integration suite runs against all three), and is tested
+  against the Firebird 6 snapshot ahead of its release
 
 ## Install
 

@@ -31,7 +31,8 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 - **[Security through Firebird roles](references/security.md)**: a JWT's `role` claim selects the
   Firebird `ROLE`, and claims can be read in PSQL for row-level rules.
 - **OpenAPI 3** description at `/`, CSV output, health endpoints, schema reload on `POST_EVENT`.
-- Firebird **3, 4 and 5**, all tested in CI.
+- Firebird **3, 4 and 5**, all tested in CI, plus early testing against the
+  [Firebird 6 snapshot](references/deployment.md#firebird-6).
 
 ## Where to start
 

@@ -254,7 +254,7 @@ func toAPIError(err error) *query.Error {
 			if len(lines) >= 3 {
 				e.Message = strings.TrimSpace(lines[2])
 				e.Details = strings.TrimSpace(strings.Join(lines[3:], "\n"))
-				e.Hint = "exception " + strings.TrimSpace(lines[1])
+				e.Hint = "exception " + plainName(strings.TrimSpace(lines[1]))
 			}
 		}
 		return e
@@ -265,6 +265,16 @@ func toAPIError(err error) *query.Error {
 			Details: err.Error()}
 	}
 	return &query.Error{Status: 500, Code: "FBRST000", Message: err.Error()}
+}
+
+// plainName turns Firebird 6's schema-qualified "PUBLIC"."NAME" into NAME,
+// the form earlier versions report.
+func plainName(s string) string {
+	s = strings.TrimPrefix(s, `"PUBLIC".`)
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' && !strings.Contains(s[1:len(s)-1], `"`) {
+		s = s[1 : len(s)-1]
+	}
+	return s
 }
 
 func firstLine(s string) string {

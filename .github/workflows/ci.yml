@@ -5,20 +5,35 @@ on:
     branches: [main]
   pull_request:
   workflow_call: # run by release.yml before publishing
+  schedule:
+    - cron: "17 4 * * 1" # weekly, to catch changes in the Firebird 6 snapshot
 
 jobs:
   test:
+    name: test (Firebird ${{ matrix.firebird }})
     runs-on: ubuntu-latest
+    # Firebird 6 is not released yet: its nightly snapshot may break at any
+    # time, so a failure there is reported but doesn't fail the run.
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
         firebird: ["3", "4", "5"]
+        experimental: [false]
+        charset: [""]
+        include:
+          # The snapshot misreports the length of CHARACTER SET NONE columns
+          # to UTF8 clients, so its database gets a real default charset.
+          - firebird: 6-snapshot
+            experimental: true
+            charset: UTF8
     services:
       firebird:
         image: firebirdsql/firebird:${{ matrix.firebird }}
         env:
           FIREBIRD_ROOT_PASSWORD: masterkey
           FIREBIRD_DATABASE: test.fdb
+          FIREBIRD_DATABASE_DEFAULT_CHARSET: ${{ matrix.charset }}
         ports:
           - 3050:3050
     steps:

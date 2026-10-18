@@ -5,6 +5,17 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- CI runs the integration suite against the Firebird 6 snapshot (`firebirdsql/firebird:6-snapshot`)
+  on every push and weekly. The job may fail without failing the build until Firebird 6 is released.
+
+### Fixed
+- Schema loading reports errors that happen while reading the system tables, instead of
+  silently loading an incomplete schema (on Firebird 6 this hid every foreign key).
+- Foreign keys and unique constraints load on Firebird 6.
+- On Firebird 6, the `hint` of a PSQL exception names the exception without the `"PUBLIC".`
+  schema prefix, as on earlier versions.
+
 ## [0.1.0] - 2026-10-18
 
 First release. Supports Firebird 3, 4 and 5.

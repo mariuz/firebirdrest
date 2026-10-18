@@ -85,3 +85,22 @@ readinessProbe: { httpGet: { path: /ready, port: 3001 } }
 
 Download the new binary or pull the new image and restart. Settings and behaviour changes are
 listed in the [changelog](../changelog.md).
+
+## Firebird 6
+
+Firebird 6 is not released yet. CI runs the full integration suite against the nightly
+`firebirdsql/firebird:6-snapshot` image on every push and once a week, so problems show up
+before the release. Firebird 6 adds SQL schemas; FirebirdREST serves the `PUBLIC` schema.
+
+Known issue with the current snapshot: text columns declared `CHARACTER SET NONE` (the default
+in a database created without `DEFAULT CHARACTER SET`) fail with *string right truncation*
+once a value is longer than a quarter of the column's size. The server misreports their length
+to clients that connect as UTF8, which FirebirdREST does by default. Until the snapshot is
+fixed, either create the database with a character set:
+
+```sql
+CREATE DATABASE 'app.fdb' DEFAULT CHARACTER SET UTF8;
+```
+
+or connect with the database's own character set, for example
+`db-uri = "user:pass@host/app.fdb?charset=NONE"`.

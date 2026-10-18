@@ -268,6 +268,9 @@ WHERE COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0
 		s.Relations[rel.Name] = rel
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	rows, err = db.QueryContext(ctx, `
 SELECT rf.RDB$RELATION_NAME, rf.RDB$FIELD_NAME, rf.RDB$FIELD_POSITION,
@@ -307,6 +310,9 @@ ORDER BY rf.RDB$RELATION_NAME, rf.RDB$FIELD_POSITION`)
 		r.Columns = append(r.Columns, c)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	for _, r := range s.Relations {
 		r.Index()
 	}
@@ -325,9 +331,11 @@ ORDER BY rf.RDB$RELATION_NAME, rf.RDB$FIELD_POSITION`)
 	return s, nil
 }
 
+// RDB$CONSTRAINT_TYPE is cast to VARCHAR because the Go driver cannot fetch
+// that CHAR column from Firebird 6 ("string right truncation").
 func loadConstraints(ctx context.Context, db *sql.DB, s *Schema, byDB map[string]*Relation) error {
 	rows, err := db.QueryContext(ctx, `
-SELECT rc.RDB$RELATION_NAME, rc.RDB$CONSTRAINT_NAME, rc.RDB$CONSTRAINT_TYPE,
+SELECT rc.RDB$RELATION_NAME, rc.RDB$CONSTRAINT_NAME, CAST(rc.RDB$CONSTRAINT_TYPE AS VARCHAR(20)),
        seg.RDB$FIELD_NAME, refc.RDB$CONST_NAME_UQ
 FROM RDB$RELATION_CONSTRAINTS rc
 JOIN RDB$INDEX_SEGMENTS seg ON seg.RDB$INDEX_NAME = rc.RDB$INDEX_NAME
@@ -359,6 +367,9 @@ ORDER BY rc.RDB$CONSTRAINT_NAME, seg.RDB$FIELD_POSITION`)
 		c.cols = append(c.cols, trim(col))
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
 	for _, n := range order {
 		c := all[n]
@@ -411,6 +422,9 @@ WHERE COALESCE(p.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(p.RDB$PRIVATE_FLAG, 0) = 0
 		s.Routines[r.Name] = r
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
 	rows, err = db.QueryContext(ctx, `
 SELECT pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_NAME, pp.RDB$PARAMETER_TYPE, pp.RDB$PARAMETER_NUMBER,
@@ -449,6 +463,9 @@ ORDER BY pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.R
 		}
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -483,6 +500,9 @@ WHERE COALESCE(fn.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(fn.RDB$PRIVATE_FLAG, 0) =
 		s.Routines[r.Name] = r
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
 	rows, err = db.QueryContext(ctx, `
 SELECT a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_NAME, a.RDB$ARGUMENT_POSITION,
@@ -527,6 +547,9 @@ ORDER BY a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_POSITION`)
 		}
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	return nil
 }
 

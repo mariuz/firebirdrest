@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,7 +31,22 @@ type Server struct {
 	log    *slog.Logger
 
 	mu    sync.Mutex
-	pools map[string]*sql.DB
+	pools map[string]*rolePool
+	basep *rolePool
+}
+
+// rolePool is the connection pool of one Firebird role plus its statement cache.
+type rolePool struct {
+	db    *sql.DB
+	cache *stmtCache // nil when db-prepared-statements = false
+}
+
+func (s *Server) newRolePool(db *sql.DB) *rolePool {
+	rp := &rolePool{db: db}
+	if s.cfg.DBPreparedStatements > 0 {
+		rp.cache = newStmtCache(db, s.cfg.DBPreparedStatements, time.Duration(s.cfg.DBPreparedStatementsIdle)*time.Second)
+	}
+	return rp
 }
 
 // New opens the database and loads the schema cache.
@@ -39,7 +55,8 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, base: db, log: log, pools: map[string]*sql.DB{}}
+	s := &Server{cfg: cfg, base: db, log: log, pools: map[string]*rolePool{}}
+	s.basep = s.newRolePool(db)
 	if err := s.Reload(ctx); err != nil {
 		db.Close()
 		return nil, err
@@ -55,6 +72,14 @@ func (s *Server) Reload(ctx context.Context) error {
 		return fmt.Errorf("loading schema: %w", err)
 	}
 	s.schema.Store(sc)
+	// cached statements may refer to objects that were just altered
+	s.mu.Lock()
+	for _, rp := range append(s.poolList(), s.basep) {
+		if rp != nil && rp.cache != nil {
+			rp.cache.clear()
+		}
+	}
+	s.mu.Unlock()
 	s.log.Info("schema cache loaded", "firebird", sc.Version, "relations", len(sc.Relations),
 		"routines", len(sc.Routines), "foreign_keys", len(sc.ForeignKeys), "took", time.Since(start).Round(time.Millisecond))
 	return nil
@@ -64,8 +89,13 @@ func (s *Server) Reload(ctx context.Context) error {
 func (s *Server) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, p := range s.pools {
-		p.Close()
+	for _, p := range append(s.poolList(), s.basep) {
+		if p.cache != nil {
+			p.cache.close()
+		}
+		if p.db != s.base {
+			p.db.Close()
+		}
 	}
 	s.base.Close()
 }
@@ -102,9 +132,17 @@ var roleName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`)
 // pool returns the connection pool for a Firebird role, creating it on first use.
 // Firebird silently falls back to no role when the user is not granted the
 // requested one, so the effective CURRENT_ROLE is checked before use.
-func (s *Server) pool(ctx context.Context, role string) (*sql.DB, error) {
+func (s *Server) poolList() []*rolePool {
+	out := make([]*rolePool, 0, len(s.pools))
+	for _, p := range s.pools {
+		out = append(out, p)
+	}
+	return out
+}
+
+func (s *Server) pool(ctx context.Context, role string) (*rolePool, error) {
 	if role == "" {
-		return s.base, nil
+		return s.basep, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -126,8 +164,9 @@ func (s *Server) pool(ctx context.Context, role string) (*sql.DB, error) {
 			Message: fmt.Sprintf("role %q is not granted to the database user", role),
 			Hint:    fmt.Sprintf("GRANT %s TO USER <authenticator>", role)}
 	}
-	s.pools[role] = p
-	return p, nil
+	rp := s.newRolePool(p)
+	s.pools[role] = rp
+	return rp, nil
 }
 
 // reqCtx carries per-request state.
@@ -139,7 +178,7 @@ type reqCtx struct {
 	anon   bool
 	claims map[string]any
 	prefer prefer
-	tx     *sql.Tx
+	tx     *cachedTx
 	status int
 }
 
@@ -270,11 +309,11 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 	if err != nil {
 		return err
 	}
-	tx, err := p.BeginTx(ctx, &sql.TxOptions{ReadOnly: ro})
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: ro})
 	if err != nil {
 		return err
 	}
-	rc.tx = tx
+	rc.tx = &cachedTx{tx: tx, cache: p.cache}
 	done := false
 	defer func() {
 		if !done {
@@ -283,11 +322,6 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 	}()
 	if err := s.setContext(rc); err != nil {
 		return err
-	}
-	if s.cfg.DBPreRequest != "" {
-		if _, err := tx.ExecContext(ctx, "EXECUTE PROCEDURE "+schema.Quote(strings.ToUpper(s.cfg.DBPreRequest))); err != nil {
-			return err
-		}
 	}
 	if err := fn(); err != nil {
 		return err
@@ -301,6 +335,46 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 
 // setContext exposes request data to SQL via RDB$GET_CONTEXT('USER_TRANSACTION', ...).
 func (s *Server) setContext(rc *reqCtx) error {
+	withVars := s.cfg.DBRequestContext == "always" ||
+		s.cfg.DBRequestContext != "never" && rc.sc.UsesRequestContext
+	pre := s.cfg.DBPreRequest
+	if !withVars && pre == "" {
+		return nil // nothing in the database reads the variables: save a round trip
+	}
+	var vars [][2]string
+	if withVars {
+		vars = requestVars(rc)
+	}
+	// One EXECUTE BLOCK sets every variable and runs the pre-request procedure,
+	// in a single round trip and without a result set to fetch.
+	var sb strings.Builder
+	sb.WriteString("EXECUTE BLOCK")
+	args := make([]any, 0, len(vars)*2)
+	if len(vars) > 0 {
+		sb.WriteString(" (")
+		for i, v := range vars {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(&sb, "k%d VARCHAR(80) = ?, v%d VARCHAR(255) = ?", i, i)
+			args = append(args, truncate(v[0], 80), truncate(v[1], 255))
+		}
+		sb.WriteString(")")
+	}
+	sb.WriteString(" AS DECLARE r INTEGER; BEGIN ")
+	for i := range vars {
+		fmt.Fprintf(&sb, "r = RDB$SET_CONTEXT('USER_TRANSACTION', :k%d, :v%d); ", i, i)
+	}
+	if pre != "" {
+		sb.WriteString("EXECUTE PROCEDURE " + schema.Quote(strings.ToUpper(pre)) + "; ")
+	}
+	sb.WriteString("END")
+	_, err := rc.tx.ExecContext(rc.r.Context(), sb.String(), args...)
+	return err
+}
+
+// requestVars lists the context variables for a request, in a stable order.
+func requestVars(rc *reqCtx) [][2]string {
 	vars := [][2]string{
 		{"request.method", rc.r.Method},
 		{"request.path", rc.r.URL.Path},
@@ -310,8 +384,13 @@ func (s *Server) setContext(rc *reqCtx) error {
 		if b, err := jsonMarshal(rc.claims); err == nil && len(b) <= 255 {
 			vars = append(vars, [2]string{"request.jwt.claims", string(b)})
 		}
-		for k, v := range rc.claims {
-			switch x := v.(type) {
+		keys := make([]string, 0, len(rc.claims))
+		for k := range rc.claims {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			switch x := rc.claims[k].(type) {
 			case string:
 				vars = append(vars, [2]string{"request.jwt.claim." + k, x})
 			case float64, bool:
@@ -324,36 +403,15 @@ func (s *Server) setContext(rc *reqCtx) error {
 			vars = append(vars, [2]string{"request.header." + strings.ToLower(h), v})
 		}
 	}
-	var sb strings.Builder
-	sb.WriteString("SELECT ")
-	args := make([]any, 0, len(vars)*2)
-	for i, v := range vars {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
-		sb.WriteString("RDB$SET_CONTEXT('USER_TRANSACTION', CAST(? AS VARCHAR(80)), CAST(? AS VARCHAR(255)))")
-		key, val := v[0], v[1]
-		if len(key) > 80 {
-			key = key[:80]
-		}
-		if len(val) > 255 {
-			val = val[:255]
-		}
-		args = append(args, key, val)
+	return vars
+}
+
+// truncate cuts s to at most n characters (not bytes).
+func truncate(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
 	}
-	sb.WriteString(" FROM RDB$DATABASE")
-	rows, err := rc.tx.QueryContext(rc.r.Context(), sb.String(), args...)
-	if err != nil {
-		return err
-	}
-	// the context functions run when the row is fetched
-	for rows.Next() {
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	return rows.Close()
+	return string([]rune(s)[:n])
 }
 
 type statusWriter struct {

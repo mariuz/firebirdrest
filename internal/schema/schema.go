@@ -94,6 +94,10 @@ type Schema struct {
 	ForeignKeys []*ForeignKey
 	Routines    map[string]*Routine // keyed by API name
 	Version     string
+	// UsesRequestContext is true when some view, trigger, routine, package or
+	// computed/default expression mentions "request." (or its source is not
+	// readable), so the request.* context variables must be set.
+	UsesRequestContext bool
 }
 
 var plainIdent = regexp.MustCompile(`^[A-Z][A-Z0-9_$]*$`)
@@ -317,6 +321,7 @@ ORDER BY rf.RDB$RELATION_NAME, rf.RDB$FIELD_POSITION`)
 		return nil, err
 	}
 	linkComputed(s, byDB)
+	s.UsesRequestContext = usesRequestContext(ctx, db)
 	return s, nil
 }
 
@@ -551,4 +556,42 @@ func linkComputed(s *Schema, byDB map[string]*Relation) {
 		rt.Parent, rt.ParentCols = parent, cols
 		parent.Computed = append(parent.Computed, rt)
 	}
+}
+
+// usesRequestContext looks for "request." in every piece of PSQL and every
+// expression stored in the database. Missing source (stripped metadata) counts
+// as a use, so the variables are only skipped when that is provably safe.
+func usesRequestContext(ctx context.Context, db *sql.DB) bool {
+	var n int
+	err := db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM (
+  SELECT RDB$PROCEDURE_SOURCE AS src FROM RDB$PROCEDURES
+   WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND RDB$PACKAGE_NAME IS NULL
+  UNION ALL
+  SELECT RDB$FUNCTION_SOURCE FROM RDB$FUNCTIONS
+   WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND RDB$PACKAGE_NAME IS NULL AND RDB$MODULE_NAME IS NULL
+  UNION ALL
+  SELECT RDB$TRIGGER_SOURCE FROM RDB$TRIGGERS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0
+  UNION ALL
+  SELECT RDB$VIEW_SOURCE FROM RDB$RELATIONS
+   WHERE RDB$VIEW_BLR IS NOT NULL AND COALESCE(RDB$SYSTEM_FLAG, 0) = 0
+  UNION ALL
+  SELECT RDB$PACKAGE_BODY_SOURCE FROM RDB$PACKAGES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0
+) x
+WHERE x.src IS NULL OR x.src CONTAINING 'request.'`).Scan(&n)
+	if err != nil || n > 0 {
+		return true
+	}
+	err = db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM RDB$FIELDS
+WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0
+  AND (RDB$COMPUTED_SOURCE CONTAINING 'request.' OR RDB$DEFAULT_SOURCE CONTAINING 'request.'
+       OR RDB$VALIDATION_SOURCE CONTAINING 'request.')`).Scan(&n)
+	if err != nil || n > 0 {
+		return true
+	}
+	err = db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM RDB$RELATION_FIELDS
+WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND RDB$DEFAULT_SOURCE CONTAINING 'request.'`).Scan(&n)
+	return err != nil || n > 0
 }

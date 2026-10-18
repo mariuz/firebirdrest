@@ -9,12 +9,14 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,7 +33,7 @@ func testServer(t *testing.T) *httptest.Server {
 	if uri == "" {
 		t.Skip("FBREST_TEST_DB_URI not set")
 	}
-	cfg := &config.Config{DBURI: uri, DBAnonRole: "web_anon", DBPool: 4, DBSafeUpdates: true, DBAggregates: true,
+	cfg := &config.Config{DBURI: uri, DBAnonRole: "web_anon", DBPool: 4, DBSafeUpdates: true, DBAggregates: true, DBPreparedStatements: 64, DBRequestContext: "auto",
 		JWTSecret: testSecret, JWTRoleClaim: "role", CORSOrigins: "*"}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s, err := New(context.Background(), cfg, log)
@@ -173,6 +175,23 @@ func TestAggregateEdgeCases(t *testing.T) {
 	}
 }
 
+func TestRequestContextDetection(t *testing.T) {
+	uri := os.Getenv("FBREST_TEST_DB_URI")
+	if uri == "" {
+		t.Skip("FBREST_TEST_DB_URI not set")
+	}
+	cfg := &config.Config{DBURI: uri, DBPool: 1, DBRequestContext: "auto"}
+	s, err := New(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// whoami() reads request.jwt.claim.sub, so the variables must be set
+	if !s.schema.Load().UsesRequestContext {
+		t.Error("the example database reads request.* variables but detection said no")
+	}
+}
+
 func TestCountAndRange(t *testing.T) {
 	ts := testServer(t)
 	r := do(t, ts, "GET", "/books?select=id&order=id", "", "Range", "1-2", "Prefer", "count=exact")
@@ -273,4 +292,71 @@ func TestWrites(t *testing.T) {
 	// nothing was committed
 	r = do(t, ts, "GET", "/tags?name=eq.new-tag", "")
 	jsonEq(t, r.body, `[]`)
+}
+
+// The statement cache must stay correct and deadlock-free when the pool is
+// tiny and the cache keeps evicting, and must let DDL through once idle.
+func TestStatementCacheUnderLoad(t *testing.T) {
+	uri := os.Getenv("FBREST_TEST_DB_URI")
+	if uri == "" {
+		t.Skip("FBREST_TEST_DB_URI not set")
+	}
+	cfg := &config.Config{DBURI: uri, DBAnonRole: "web_anon", DBPool: 2, DBSafeUpdates: true,
+		DBPreparedStatements: 4, DBPreparedStatementsIdle: 1, DBRequestContext: "always", JWTRoleClaim: "role"}
+	s, err := New(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s)
+	defer func() { ts.Close(); s.Close() }()
+
+	var wg sync.WaitGroup
+	errs := make(chan string, 1000)
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < 60; i++ {
+				id := 1 + (w+i)%5
+				// 10 distinct SQL texts (limit varies) against a 4-entry cache
+				r := do(t, ts, "GET", fmt.Sprintf("/books?select=id&id=eq.%d&limit=%d", id, 1+i%10), "")
+				if r.status != 200 || r.body != fmt.Sprintf(`[{"id":%d}]`, id) {
+					errs <- fmt.Sprintf("%d %s", r.status, r.body)
+					return
+				}
+			}
+		}(w)
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(60 * time.Second):
+		t.Fatal("requests deadlocked")
+	}
+	close(errs)
+	for e := range errs {
+		t.Error(e)
+	}
+	rp := s.pools["web_anon"]
+	rp.cache.mu.Lock()
+	n := rp.cache.ll.Len()
+	rp.cache.mu.Unlock()
+	if n == 0 || n > 4 {
+		t.Errorf("cache holds %d statements, want 1..4", n)
+	}
+	// idle statements are released
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		rp.cache.mu.Lock()
+		n = rp.cache.ll.Len()
+		rp.cache.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if n != 0 {
+		t.Errorf("%d statements still cached after the idle timeout", n)
+	}
 }

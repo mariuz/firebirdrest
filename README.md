@@ -374,12 +374,16 @@ Settings come from an optional config file (`firebirdrest app.conf`; see
 | `db-pre-request` | `FBREST_DB_PRE_REQUEST` | none | executable procedure run before each request |
 | `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters |
 | `db-aggregates-enabled` | `FBREST_DB_AGGREGATES_ENABLED` | `true` | allow `count()`, `sum()`, … in `select` |
+| `db-request-context` | `FBREST_DB_REQUEST_CONTEXT` | `auto` | set the `request.*` context variables: `auto` (only when some view, trigger or routine mentions `request.`), `always`, `never` |
+| `db-prepared-statements` | `FBREST_DB_PREPARED_STATEMENTS` | `256` | prepared statements cached per role (0 = off) |
+| `db-prepared-statements-idle` | `FBREST_DB_PREPARED_STATEMENTS_IDLE` | `30` | close cached statements unused for this many seconds (see [DDL notes](docs/benchmarks.md#prepared-statements-and-ddl)) |
 | `db-reload-event` | `FBREST_DB_RELOAD_EVENT` | `fbrest_reload` | `POST_EVENT` that reloads the schema cache |
 | `jwt-secret` | `FBREST_JWT_SECRET` | none | HMAC secret, or PEM public key |
 | `jwt-aud` | `FBREST_JWT_AUD` | none | required `aud` claim |
 | `jwt-role-claim-key` | `FBREST_JWT_ROLE_CLAIM_KEY` | `role` | dotted path to the role, e.g. `app_metadata.role` |
 | `server-host` / `server-port` | `FBREST_SERVER_HOST` / `FBREST_SERVER_PORT` | `0.0.0.0` / `3000` | |
 | `admin-server-port` | `FBREST_ADMIN_SERVER_PORT` | `0` (off) | `GET /live`, `GET /ready`, `POST /reload` |
+| `admin-pprof` | `FBREST_ADMIN_PPROF` | `false` | also serve Go profiling at `/debug/pprof/` on the admin port |
 | `server-cors-allowed-origins` | `FBREST_SERVER_CORS_ALLOWED_ORIGINS` | `*` | comma-separated list |
 | `openapi-server-proxy-uri` | `FBREST_OPENAPI_SERVER_PROXY_URI` | request host | public URL shown in the OpenAPI document |
 | `log-level` | `FBREST_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
@@ -420,6 +424,16 @@ FirebirdREST borrows PostgREST's interface, but Firebird is not PostgreSQL:
 - Embedded children are fetched with one batched `IN (...)` query per embed level instead of a single
   SQL statement. Per-parent `limit`/`offset` on embeds is applied after fetching.
 - A request cannot change roles mid-transaction, so each role gets its own connection pool.
+
+## Performance
+
+A single FirebirdREST instance on a 4-vCPU VM serves roughly 3,500–4,500 primary-key lookups
+and 2,000 pages of 100 rows per second against Firebird 5. See [docs/benchmarks.md](docs/benchmarks.md)
+for the full results, the load tool and what was tuned.
+
+To drop a table or view while the server runs, reload the schema cache first
+(`POST /reload` on the admin port, or `kill -USR1`): cached prepared statements hold Firebird
+metadata locks until they have been idle for `db-prepared-statements-idle` seconds.
 
 ## Development
 

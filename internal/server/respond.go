@@ -106,14 +106,14 @@ func writeRows(rc *reqCtx, status int, rows []*query.Obj) error {
 				Message: "JSON object requested, multiple (or no) rows returned",
 				Details: fmt.Sprintf("the result contains %d rows", len(rows))}
 		}
-		body, err = jsonMarshal(rows[0])
+		body = query.AppendJSON(make([]byte, 0, 512), rows[0])
 	case mimeCSV:
 		body, err = toCSV(rows)
 	default:
 		if rows == nil {
 			rows = []*query.Obj{}
 		}
-		body, err = jsonMarshal(rows)
+		body = query.AppendJSON(make([]byte, 0, 256*len(rows)+2), rows)
 		mt = mimeJSON
 	}
 	if err != nil {
@@ -154,8 +154,7 @@ func toCSV(rows []*query.Obj) ([]byte, error) {
 			case string:
 				rec[i] = x
 			default:
-				b, _ := json.Marshal(x)
-				rec[i] = string(b)
+				rec[i] = string(query.AppendJSON(nil, x))
 			}
 		}
 		w.Write(rec)

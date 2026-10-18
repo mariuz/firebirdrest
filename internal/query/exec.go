@@ -49,23 +49,7 @@ func (o *Obj) Get(k string) any {
 
 // MarshalJSON writes the object with keys in order.
 func (o *Obj) MarshalJSON() ([]byte, error) {
-	var sb strings.Builder
-	sb.WriteByte('{')
-	for i, k := range o.Keys {
-		if i > 0 {
-			sb.WriteByte(',')
-		}
-		kb, _ := json.Marshal(k)
-		sb.Write(kb)
-		sb.WriteByte(':')
-		vb, err := json.Marshal(o.Vals[i])
-		if err != nil {
-			return nil, err
-		}
-		sb.Write(vb)
-	}
-	sb.WriteByte('}')
-	return []byte(sb.String()), nil
+	return AppendJSON(nil, o), nil
 }
 
 func marshalJSON(v any) (string, error) {

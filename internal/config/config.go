@@ -11,23 +11,33 @@ import (
 
 // Config holds all runtime settings.
 type Config struct {
-	DBURI           string // nakagami/firebirdsql DSN: user:password@host:port/path/to/db.fdb
-	DBAnonRole      string // role for requests without a JWT ("" = reject them)
-	DBPool          int
-	DBMaxRows       int
-	DBPreRequest    string // executable procedure run before each request
-	DBSafeUpdates   bool   // reject PATCH/DELETE without filters
-	DBAggregates    bool   // allow count()/sum()/avg()/min()/max() in select
-	DBReloadEvent   string // POST_EVENT name that triggers a schema reload
-	JWTSecret       string // HMAC secret, or PEM encoded RSA/ECDSA public key
-	JWTAudience     string
-	JWTRoleClaim    string // dotted path, e.g. "role" or "app_metadata.role"
-	ServerHost      string
-	ServerPort      int
-	AdminPort       int // 0 = disabled; serves /live and /ready
-	CORSOrigins     string
-	OpenAPIProxyURI string
-	LogLevel        string
+	DBURI         string // nakagami/firebirdsql DSN: user:password@host:port/path/to/db.fdb
+	DBAnonRole    string // role for requests without a JWT ("" = reject them)
+	DBPool        int
+	DBMaxRows     int
+	DBPreRequest  string // executable procedure run before each request
+	DBSafeUpdates bool   // reject PATCH/DELETE without filters
+	DBAggregates  bool   // allow count()/sum()/avg()/min()/max() in select
+	// DBRequestContext: "auto" sets the request.* context variables only when
+	// some database object reads them; "always" or "never" force it.
+	DBRequestContext string
+	// DBPreparedStatements is the number of prepared statements cached per
+	// role (0 disables the cache).
+	DBPreparedStatements int
+	// DBPreparedStatementsIdle closes cached statements unused for this many
+	// seconds, releasing their metadata locks (0 = never).
+	DBPreparedStatementsIdle int
+	DBReloadEvent            string // POST_EVENT name that triggers a schema reload
+	JWTSecret                string // HMAC secret, or PEM encoded RSA/ECDSA public key
+	JWTAudience              string
+	JWTRoleClaim             string // dotted path, e.g. "role" or "app_metadata.role"
+	ServerHost               string
+	ServerPort               int
+	AdminPort                int  // 0 = disabled; serves /live and /ready
+	AdminPprof               bool // also serve Go profiling endpoints at /debug/pprof/ on the admin port
+	CORSOrigins              string
+	OpenAPIProxyURI          string
+	LogLevel                 string
 }
 
 // keys maps config-file keys to environment variable names.
@@ -39,6 +49,9 @@ var keys = map[string]string{
 	"db-pre-request":              "FBREST_DB_PRE_REQUEST",
 	"db-safe-updates":             "FBREST_DB_SAFE_UPDATES",
 	"db-aggregates-enabled":       "FBREST_DB_AGGREGATES_ENABLED",
+	"db-request-context":          "FBREST_DB_REQUEST_CONTEXT",
+	"db-prepared-statements":      "FBREST_DB_PREPARED_STATEMENTS",
+	"db-prepared-statements-idle": "FBREST_DB_PREPARED_STATEMENTS_IDLE",
 	"db-reload-event":             "FBREST_DB_RELOAD_EVENT",
 	"jwt-secret":                  "FBREST_JWT_SECRET",
 	"jwt-aud":                     "FBREST_JWT_AUD",
@@ -46,6 +59,7 @@ var keys = map[string]string{
 	"server-host":                 "FBREST_SERVER_HOST",
 	"server-port":                 "FBREST_SERVER_PORT",
 	"admin-server-port":           "FBREST_ADMIN_SERVER_PORT",
+	"admin-pprof":                 "FBREST_ADMIN_PPROF",
 	"server-cors-allowed-origins": "FBREST_SERVER_CORS_ALLOWED_ORIGINS",
 	"openapi-server-proxy-uri":    "FBREST_OPENAPI_SERVER_PROXY_URI",
 	"log-level":                   "FBREST_LOG_LEVEL",
@@ -129,6 +143,12 @@ func Load(path string) (*Config, error) {
 	if c.DBMaxRows, err = geti("FBREST_DB_MAX_ROWS", 0); err != nil {
 		return nil, err
 	}
+	if c.DBPreparedStatements, err = geti("FBREST_DB_PREPARED_STATEMENTS", 256); err != nil {
+		return nil, err
+	}
+	if c.DBPreparedStatementsIdle, err = geti("FBREST_DB_PREPARED_STATEMENTS_IDLE", 30); err != nil {
+		return nil, err
+	}
 	if c.ServerPort, err = geti("FBREST_SERVER_PORT", 3000); err != nil {
 		return nil, err
 	}
@@ -137,6 +157,13 @@ func Load(path string) (*Config, error) {
 	}
 	c.DBSafeUpdates = isTrue(get("FBREST_DB_SAFE_UPDATES", "true"))
 	c.DBAggregates = isTrue(get("FBREST_DB_AGGREGATES_ENABLED", "true"))
+	c.AdminPprof = isTrue(get("FBREST_ADMIN_PPROF", "false"))
+	c.DBRequestContext = strings.ToLower(get("FBREST_DB_REQUEST_CONTEXT", "auto"))
+	switch c.DBRequestContext {
+	case "auto", "always", "never":
+	default:
+		return nil, fmt.Errorf("db-request-context must be auto, always or never, got %q", c.DBRequestContext)
+	}
 	if c.DBURI == "" {
 		return nil, fmt.Errorf("db-uri (FBREST_DB_URI) is required, e.g. user:password@localhost:3050/var/lib/firebird/data/app.fdb")
 	}

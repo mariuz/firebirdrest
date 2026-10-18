@@ -167,11 +167,7 @@ func (s *Server) writeValue(rc *reqCtx, v any) error {
 		writeBody(rc, http.StatusOK, mt, []byte(fmt.Sprint(v)))
 		return nil
 	}
-	body, err := jsonMarshal(v)
-	if err != nil {
-		return err
-	}
-	writeBody(rc, http.StatusOK, mimeJSON, body)
+	writeBody(rc, http.StatusOK, mimeJSON, query.AppendJSON(nil, v))
 	return nil
 }
 

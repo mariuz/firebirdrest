@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -107,6 +108,13 @@ func main() {
 			}
 			w.WriteHeader(http.StatusNoContent)
 		})
+		if cfg.AdminPprof {
+			admin.HandleFunc("/debug/pprof/", pprof.Index)
+			admin.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+			admin.HandleFunc("/debug/pprof/profile", pprof.Profile)
+			admin.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+			admin.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		}
 		go func() {
 			addr := net.JoinHostPort(cfg.ServerHost, strconv.Itoa(cfg.AdminPort))
 			log.Info("admin server listening", "addr", addr)

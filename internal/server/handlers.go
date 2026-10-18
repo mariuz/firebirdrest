@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -222,6 +223,13 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 		}
 	}
 
+	// rows with the same columns share one prepared statement
+	stmts := map[string]*sql.Stmt{}
+	defer func() {
+		for _, st := range stmts {
+			st.Close()
+		}
+	}()
 	for _, row := range rows {
 		cols, vals, err := rowValues(rel, row, p.Columns, p.Columns == nil || rc.prefer.missing == "default")
 		if err != nil {
@@ -278,7 +286,19 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 			}
 		}
 		b.W(" RETURNING ", quoteCols(retCols))
-		res, err := rc.tx.QueryContext(ctx, b.String(), b.Args...)
+		var res *sql.Rows
+		if len(rows) == 1 {
+			res, err = rc.tx.QueryContext(ctx, b.String(), b.Args...)
+		} else {
+			st := stmts[b.String()]
+			if st == nil {
+				if st, err = rc.tx.PrepareContext(ctx, b.String()); err != nil {
+					return err
+				}
+				stmts[b.String()] = st
+			}
+			res, err = st.QueryContext(ctx, b.Args...)
+		}
 		if err != nil {
 			return err
 		}

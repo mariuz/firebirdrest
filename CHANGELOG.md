@@ -54,6 +54,7 @@ First release. Supports Firebird 3, 4 and 5.
 - Schema cache reload with `POST_EVENT 'fbrest_reload'`, `SIGUSR1` or `POST /reload` on the
   admin server, which also serves `/live` and `/ready`.
 - Config file or `FBREST_*` environment variables; CORS; Docker image and docker-compose example.
+- Documentation site at <https://mariuz.github.io/firebirdrest/> (built from `docs/`).
 - `bench/` load tool with a data seeder.
 - `admin-pprof` serves Go profiling endpoints on the admin port.
 - Release workflow can be started from GitHub (Actions, then Release, then Run workflow).

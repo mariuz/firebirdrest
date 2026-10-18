@@ -1,9 +1,17 @@
 name: Release
 
-# Push a tag such as v0.2.0 to publish binaries, a GitHub release and a Docker image.
+# Two ways to release:
+#  - push a tag:       git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0
+#  - from GitHub:      Actions -> Release -> Run workflow, enter the version (e.g. 0.2.0).
+#                      The tag is created on the selected branch after the tests pass.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.2.0 or 0.2.0-rc1"
+        required: true
 
 permissions:
   contents: write
@@ -13,12 +21,44 @@ jobs:
   test:
     uses: ./.github/workflows/ci.yml
 
-  binaries:
+  tag:
     needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          v="${INPUT_VERSION#v}"
+          if ! echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::'$INPUT_VERSION' is not a semantic version like 0.2.0"
+            exit 1
+          fi
+          tag="v$v"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::tag $tag already exists"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "FirebirdREST $tag"
+          git push origin "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    needs: tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.tag.outputs.tag }}
           fetch-depth: 0 # the changelog needs the full history
       - uses: actions/setup-go@v7
         with:
@@ -32,10 +72,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
-    needs: test
+    needs: tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.tag.outputs.tag }}
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
@@ -48,9 +90,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{version}},value=${{ needs.tag.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.tag.outputs.tag }}
+            type=raw,value=latest,enable=${{ !contains(needs.tag.outputs.tag, '-') }}
       - uses: docker/build-push-action@v7
         with:
           context: .
@@ -58,4 +100,4 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: VERSION=${{ needs.tag.outputs.tag }}

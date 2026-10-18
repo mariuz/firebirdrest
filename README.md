@@ -433,8 +433,10 @@ docker cp examples/bookstore.sql fb:/tmp/ && docker exec fb /opt/firebird/bin/is
 FBREST_TEST_DB_URI=authenticator:authenticator@localhost:3050/var/lib/firebird/data/test.fdb go test ./...
 ```
 
-Releases: add the changes to `CHANGELOG.md`, then push a tag. The release workflow runs the
-tests, publishes binaries and checksums with GoReleaser, and pushes the Docker image to GHCR:
+Releases: add the changes to `CHANGELOG.md`, then either push a tag or open
+**Actions → Release → Run workflow** on GitHub and enter the version (the workflow creates the
+tag after the tests pass). The release workflow publishes binaries and checksums with
+GoReleaser and pushes the Docker image to GHCR:
 
 ```sh
 git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0

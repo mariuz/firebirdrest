@@ -1,0 +1,62 @@
+# Release configuration: https://goreleaser.com
+# Test locally with: goreleaser release --snapshot --clean
+version: 2
+
+project_name: firebirdrest
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: firebirdrest
+    main: ./cmd/firebirdrest
+    binary: firebirdrest
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/mariuz/firebirdrest/internal/server.Version={{ .Tag }}
+    goos: [linux, darwin, windows, freebsd]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - examples/*
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^ci:"
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: mariuz
+    name: firebirdrest
+  prerelease: auto
+  header: |
+    Binaries for Linux, macOS, Windows and FreeBSD are attached below. The Docker image is
+    `ghcr.io/mariuz/firebirdrest:{{ .Version }}`. See [CHANGELOG.md](https://github.com/mariuz/firebirdrest/blob/{{ .Tag }}/CHANGELOG.md) for details.

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strconv"
 	"syscall"
 	"time"
@@ -28,6 +29,12 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	if server.Version == "dev" {
+		// go install github.com/mariuz/firebirdrest/cmd/firebirdrest@v1.2.3
+		if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			server.Version = bi.Main.Version
+		}
+	}
 	if *showVersion {
 		fmt.Println("firebirdrest", server.Version)
 		return
@@ -69,16 +76,8 @@ func main() {
 	}
 	defer srv.Close()
 
-	// SIGUSR1 reloads the schema cache.
-	usr1 := make(chan os.Signal, 1)
-	signal.Notify(usr1, syscall.SIGUSR1)
-	go func() {
-		for range usr1 {
-			if err := srv.Reload(context.Background()); err != nil {
-				log.Error("schema reload failed", "err", err)
-			}
-		}
-	}()
+	// SIGUSR1 reloads the schema cache (not available on Windows).
+	reloadOnSignal(srv, log)
 
 	// POST_EVENT '<db-reload-event>' from the database also reloads it.
 	if cfg.DBReloadEvent != "" {

@@ -29,6 +29,21 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 - **Schema cache reload** on `POST_EVENT 'fbrest_reload'`, `SIGUSR1` or `POST /reload`
 - Works with Firebird **3, 4 and 5** (the integration suite runs against all three)
 
+## Install
+
+- **Binaries** for Linux, macOS, Windows and FreeBSD (amd64/arm64) are on the
+  [releases page](https://github.com/mariuz/firebirdrest/releases). Each is a single static file
+  with no dependencies.
+- **Docker**: `docker run -p 3000:3000 -e FBREST_DB_URI=... ghcr.io/mariuz/firebirdrest:latest`
+  (images for linux/amd64 and linux/arm64).
+- **Go**: `go install github.com/mariuz/firebirdrest/cmd/firebirdrest@latest`
+
+```sh
+# example: Linux x86-64 (pick your version and platform from the releases page)
+curl -L https://github.com/mariuz/firebirdrest/releases/download/v0.1.0/firebirdrest_0.1.0_linux_amd64.tar.gz | tar xz
+./firebirdrest --version
+```
+
 ## Quick start
 
 With Docker:
@@ -41,11 +56,9 @@ docker compose up --build
 This starts Firebird 5 with the [example bookstore database](examples/bookstore.sql), FirebirdREST on
 <http://localhost:3000> and Swagger UI on <http://localhost:8080>.
 
-From source (Go 1.24+):
+With a binary:
 
 ```sh
-go install github.com/mariuz/firebirdrest/cmd/firebirdrest@latest
-
 export FBREST_DB_URI='authenticator:secret@localhost:3050/var/lib/firebird/data/app.fdb'
 export FBREST_DB_ANON_ROLE=web_anon
 firebirdrest            # or: firebirdrest examples/firebirdrest.conf
@@ -418,6 +431,14 @@ docker run -d --name fb -p 3050:3050 -e FIREBIRD_ROOT_PASSWORD=masterkey -e FIRE
 docker cp examples/bookstore.sql fb:/tmp/ && docker exec fb /opt/firebird/bin/isql \
   -user SYSDBA -password masterkey localhost:/var/lib/firebird/data/test.fdb -i /tmp/bookstore.sql
 FBREST_TEST_DB_URI=authenticator:authenticator@localhost:3050/var/lib/firebird/data/test.fdb go test ./...
+```
+
+Releases: add the changes to `CHANGELOG.md`, then push a tag. The release workflow runs the
+tests, publishes binaries and checksums with GoReleaser, and pushes the Docker image to GHCR:
+
+```sh
+git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0
+goreleaser release --snapshot --clean      # try the release build locally
 ```
 
 Layout:

@@ -81,7 +81,9 @@ func (s *Server) Reload(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 	s.log.Info("schema cache loaded", "firebird", sc.Version, "relations", len(sc.Relations),
-		"routines", len(sc.Routines), "foreign_keys", len(sc.ForeignKeys), "took", time.Since(start).Round(time.Millisecond))
+		"routines", len(sc.Routines), "foreign_keys", len(sc.ForeignKeys),
+		"request_context", s.cfg.DBRequestContext == "always" || s.cfg.DBRequestContext != "never" && sc.UsesRequestContext,
+		"took", time.Since(start).Round(time.Millisecond))
 	return nil
 }
 

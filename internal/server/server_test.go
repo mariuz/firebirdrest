@@ -289,6 +289,13 @@ func TestWrites(t *testing.T) {
 		t.Errorf("rpc: %d %s", r.status, r.body)
 	}
 
+	// a PSQL exception becomes a 400 that leads with the exception's message
+	r = do(t, ts, "POST", "/rpc/place_order", `{"customer_id":1,"book_id":5}`, "Authorization", user, "Prefer", rb)
+	if r.status != 400 || !strings.Contains(r.body, `"message":"This book is out of stock"`) ||
+		!strings.Contains(r.body, `"hint":"exception OUT_OF_STOCK"`) {
+		t.Errorf("exception: %d %s", r.status, r.body)
+	}
+
 	// nothing was committed
 	r = do(t, ts, "GET", "/tags?name=eq.new-tag", "")
 	jsonEq(t, r.body, `[]`)

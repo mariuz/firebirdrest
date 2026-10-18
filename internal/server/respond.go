@@ -2,12 +2,14 @@ package server
 
 import (
 	"bytes"
+	"database/sql/driver"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -245,9 +247,22 @@ func toAPIError(err error) *query.Error {
 			e.Status = 500
 		}
 		if slices.Contains(fe.GDSCodes, 335544517) { // isc_except: user-defined EXCEPTION
+			// Firebird reports "exception <id>\n<NAME>\n<message>\n<where>...";
+			// lead with the exception's own message.
 			e.Status = 400
+			lines := strings.Split(msg, "\n")
+			if len(lines) >= 3 {
+				e.Message = strings.TrimSpace(lines[2])
+				e.Details = strings.TrimSpace(strings.Join(lines[3:], "\n"))
+				e.Hint = "exception " + strings.TrimSpace(lines[1])
+			}
 		}
 		return e
+	}
+	var ne net.Error
+	if errors.As(err, &ne) || errors.Is(err, driver.ErrBadConn) || errors.Is(err, io.EOF) {
+		return &query.Error{Status: 503, Code: "FBRST001", Message: "the database is not reachable",
+			Details: err.Error()}
 	}
 	return &query.Error{Status: 500, Code: "FBRST000", Message: err.Error()}
 }

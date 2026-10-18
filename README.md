@@ -2,6 +2,8 @@
 
 **Serve a RESTful API from any [Firebird](https://firebirdsql.org) database.**
 
+**Documentation: <https://mariuz.github.io/firebirdrest/>**
+
 FirebirdREST is a standalone web server that turns your Firebird database into a REST API,
 in the spirit of [PostgREST](https://postgrest.org). Your tables, views, stored procedures and
 functions become endpoints. Grants and roles you already defined in Firebird decide what each
@@ -98,8 +100,9 @@ curl localhost:3000/customers -H "Authorization: Bearer $TOKEN"
 
 ### Request context in PSQL
 
-Every request sets transaction-scoped context variables that triggers, views, procedures and
-check constraints can read:
+Requests set transaction-scoped context variables that triggers, views, procedures and check
+constraints can read. They are only set when some object in the database mentions `request.`
+(see `db-request-context`):
 
 | Variable (namespace `USER_TRANSACTION`) | Value |
 |---|---|
@@ -393,7 +396,11 @@ Settings come from an optional config file (`firebirdrest app.conf`; see
 Run DDL, then do any one of these:
 
 ```sql
-EXECUTE BLOCK AS BEGIN POST_EVENT 'fbrest_reload'; END
+-- in isql; other tools don't need SET TERM
+SET TERM ^;
+EXECUTE BLOCK AS BEGIN POST_EVENT 'fbrest_reload'; END^
+SET TERM ;^
+COMMIT;
 ```
 
 ```sh

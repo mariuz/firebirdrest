@@ -65,6 +65,8 @@ CREATE VIEW books_with_authors AS
   SELECT b.id, b.title, a.name AS author, b.price
   FROM books b LEFT JOIN authors a ON a.id = b.author_id;
 
+CREATE EXCEPTION out_of_stock 'This book is out of stock';
+
 SET TERM ^ ;
 
 -- selectable procedure: GET /rpc/books_by_country?country=UK
@@ -80,10 +82,13 @@ BEGIN
 END^
 
 -- executable procedure: POST /rpc/place_order {"customer_id":1,"book_id":2,"qty":1}
+-- raises OUT_OF_STOCK (HTTP 400) for books that are not in stock
 CREATE PROCEDURE place_order (customer_id INTEGER, book_id INTEGER, qty INTEGER = 1)
 RETURNS (order_id INTEGER)
 AS
 BEGIN
+  IF (NOT EXISTS (SELECT 1 FROM books b WHERE b.id = :book_id AND b.in_stock)) THEN
+    EXCEPTION out_of_stock;
   INSERT INTO orders (customer_id) VALUES (:customer_id) RETURNING id INTO :order_id;
   INSERT INTO order_items (order_id, book_id, qty) VALUES (:order_id, :book_id, :qty);
 END^
@@ -248,6 +253,8 @@ GRANT SELECT ON books TO PROCEDURE similar_books;
 GRANT SELECT ON books TO PROCEDURE author_stats;
 -- the procedure writes to these tables with its own privileges
 GRANT INSERT ON orders TO PROCEDURE place_order;
+GRANT SELECT ON books TO PROCEDURE place_order;
+GRANT USAGE ON EXCEPTION out_of_stock TO PROCEDURE place_order;
 GRANT INSERT ON order_items TO PROCEDURE place_order;
 
 -- the authenticator user may only switch to these roles

@@ -41,17 +41,34 @@ func col(alias, dbName string) string { return alias + "." + schema.Quote(dbName
 func FieldExpr(alias string, f Field) string {
 	var e string
 	switch {
-	case f.Agg == "count" && f.Col.DBName == "":
+	case f.Agg == "count" && f.Col.DBName == "" && f.Fn == nil:
 		e = "COUNT(*)"
 	case f.Agg != "":
-		e = strings.ToUpper(f.Agg) + "(" + col(alias, f.Col.DBName) + ")"
+		e = strings.ToUpper(f.Agg) + "(" + baseExpr(alias, f) + ")"
 	default:
-		e = col(alias, f.Col.DBName)
+		e = baseExpr(alias, f)
 	}
 	if f.Cast != "" {
 		e = "CAST(" + e + " AS " + castTypes[f.Cast] + ")"
 	}
 	return e
+}
+
+// baseExpr is the column, or the function call of a computed field.
+func baseExpr(alias string, f Field) string {
+	if f.Fn != nil {
+		return callExpr(f.Fn, alias)
+	}
+	return col(alias, f.Col.DBName)
+}
+
+// callExpr calls rt with the parent columns of alias as arguments.
+func callExpr(rt *schema.Routine, alias string) string {
+	args := make([]string, len(rt.ParentCols))
+	for i, c := range rt.ParentCols {
+		args[i] = col(alias, c)
+	}
+	return rt.SQLName() + "(" + strings.Join(args, ", ") + ")"
 }
 
 // FieldColumn returns metadata describing the produced value (after casts).
@@ -129,8 +146,9 @@ func (b *Builder) writeNode(n *ReadNode, alias string, w Node) error {
 }
 
 func (b *Builder) writeFilter(n *ReadNode, alias string, f *Filter) error {
-	c := n.Rel.Column(f.Field)
-	if c == nil {
+	fld, found := fieldFor(n.Rel, f.Field)
+	c := fld.Col
+	if !found {
 		// embed=is.null / embed=not.is.null filters on embedded resources
 		for _, ch := range n.Children {
 			if ch.Key == f.Field && f.Op == "is" && (f.Value == "null" || f.Value == "not_null") {
@@ -144,7 +162,7 @@ func (b *Builder) writeFilter(n *ReadNode, alias string, f *Filter) error {
 	if f.Negate {
 		b.W("NOT ")
 	}
-	e := col(alias, c.DBName)
+	e := baseExpr(alias, fld)
 	b.W("(")
 	defer b.W(")")
 	switch f.Op {
@@ -219,9 +237,21 @@ func (b *Builder) writeExists(parent *ReadNode, palias string, c *ReadNode, nega
 		b.W("NOT ")
 	}
 	ca := b.nextAlias()
+	j := c.Join
+	if j.Kind == Computed {
+		if j.Single {
+			return badRequest("FBRST120", "%q is an executable procedure: !inner and is.null filters need a selectable procedure (with SUSPEND)", c.Key)
+		}
+		b.W("EXISTS (SELECT 1 FROM ", callExpr(j.Routine, palias), " ", ca, " WHERE ")
+		ok, err := b.WriteWhere(c, ca, nil)
+		if !ok {
+			b.W("1 = 1")
+		}
+		b.W(")")
+		return err
+	}
 	b.W("EXISTS (SELECT 1 FROM ")
 	b.WriteFrom(c, ca)
-	j := c.Join
 	matchAlias := ca
 	if j.Kind == ManyToMany {
 		ja := b.nextAlias()
@@ -257,7 +287,8 @@ func (b *Builder) WriteOrder(n *ReadNode, alias string) {
 		if i > 0 {
 			b.W(", ")
 		}
-		b.W(col(alias, n.Rel.Column(o.Field).DBName))
+		f, _ := fieldFor(n.Rel, o.Field)
+		b.W(baseExpr(alias, f))
 		if o.Desc {
 			b.W(" DESC")
 		}

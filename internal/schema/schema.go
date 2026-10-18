@@ -26,6 +26,9 @@ type Column struct {
 	HasDefault bool
 	Identity   bool
 	Computed   bool
+	// for routine parameters declared TYPE OF COLUMN rel.col
+	SourceRel string
+	SourceCol string
 }
 
 // Relation is a table or a view.
@@ -38,6 +41,19 @@ type Relation struct {
 	PrimaryKey  []string // DB column names
 	Uniques     [][]string
 	cols        map[string]*Column
+	// Computed lists routines whose inputs are all TYPE OF COLUMN this relation:
+	// functions are computed fields, procedures are computed relationships.
+	Computed []*Routine
+}
+
+// ComputedField finds a function usable as a computed column of r.
+func (r *Relation) ComputedField(name string) *Routine {
+	for _, rt := range r.Computed {
+		if rt.Kind == Function && (rt.Name == name || rt.DBName == name) {
+			return rt
+		}
+	}
+	return nil
 }
 
 // ForeignKey links columns of From to the referenced columns of To.
@@ -66,6 +82,10 @@ type Routine struct {
 	Description string
 	In          []*Column
 	Out         []*Column // output parameters (procedures) or the return value (functions)
+	// Parent is set when every input parameter is TYPE OF COLUMN of one relation;
+	// ParentCols are those columns in parameter order.
+	Parent     *Relation
+	ParentCols []string
 }
 
 // Schema is the cached view of the database.
@@ -296,6 +316,7 @@ ORDER BY rf.RDB$RELATION_NAME, rf.RDB$FIELD_POSITION`)
 	if err := loadFunctions(ctx, db, s); err != nil {
 		return nil, err
 	}
+	linkComputed(s, byDB)
 	return s, nil
 }
 
@@ -391,7 +412,8 @@ SELECT pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_NAME, pp.RDB
        f.RDB$FIELD_TYPE, COALESCE(f.RDB$FIELD_SUB_TYPE, 0), COALESCE(f.RDB$FIELD_SCALE, 0),
        COALESCE(f.RDB$FIELD_LENGTH, 0), COALESCE(f.RDB$CHARACTER_LENGTH, 0),
        COALESCE(f.RDB$FIELD_PRECISION, 0),
-       pp.RDB$DEFAULT_SOURCE IS NOT NULL OR f.RDB$DEFAULT_SOURCE IS NOT NULL
+       pp.RDB$DEFAULT_SOURCE IS NOT NULL OR f.RDB$DEFAULT_SOURCE IS NOT NULL,
+       pp.RDB$RELATION_NAME, pp.RDB$FIELD_NAME
 FROM RDB$PROCEDURE_PARAMETERS pp
 JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = pp.RDB$FIELD_SOURCE
 ORDER BY pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.RDB$PARAMETER_NUMBER`)
@@ -399,11 +421,11 @@ ORDER BY pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.R
 		return fmt.Errorf("reading procedure parameters: %w", err)
 	}
 	for rows.Next() {
-		var pkg, proc, name sql.NullString
+		var pkg, proc, name, srcRel, srcCol sql.NullString
 		var ptype, num int
 		c := &Column{Nullable: true}
 		if err := rows.Scan(&pkg, &proc, &name, &ptype, &num, &c.FieldType, &c.SubType, &c.Scale,
-			&c.Length, &c.CharLength, &c.Precision, &c.HasDefault); err != nil {
+			&c.Length, &c.CharLength, &c.Precision, &c.HasDefault, &srcRel, &srcCol); err != nil {
 			rows.Close()
 			return err
 		}
@@ -414,6 +436,7 @@ ORDER BY pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.R
 		c.DBName = trim(name)
 		c.Name = APIName(c.DBName)
 		c.Position = num
+		c.SourceRel, c.SourceCol = trim(srcRel), trim(srcCol)
 		if ptype == 0 {
 			r.In = append(r.In, c)
 		} else {
@@ -463,7 +486,8 @@ SELECT a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_NAME, a.RDB$ARGUM
        COALESCE(f.RDB$FIELD_LENGTH, a.RDB$FIELD_LENGTH, 0),
        COALESCE(f.RDB$CHARACTER_LENGTH, a.RDB$CHARACTER_LENGTH, 0),
        COALESCE(f.RDB$FIELD_PRECISION, a.RDB$FIELD_PRECISION, 0),
-       a.RDB$DEFAULT_SOURCE IS NOT NULL
+       a.RDB$DEFAULT_SOURCE IS NOT NULL,
+       a.RDB$RELATION_NAME, a.RDB$FIELD_NAME
 FROM RDB$FUNCTION_ARGUMENTS a
 LEFT JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = a.RDB$FIELD_SOURCE
 ORDER BY a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_POSITION`)
@@ -471,12 +495,12 @@ ORDER BY a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_POSITION`)
 		return fmt.Errorf("reading function arguments: %w", err)
 	}
 	for rows.Next() {
-		var pkg, fn, name sql.NullString
+		var pkg, fn, name, srcRel, srcCol sql.NullString
 		var pos int
 		var ft sql.NullInt64
 		c := &Column{Nullable: true}
 		if err := rows.Scan(&pkg, &fn, &name, &pos, &ft, &c.SubType, &c.Scale, &c.Length,
-			&c.CharLength, &c.Precision, &c.HasDefault); err != nil {
+			&c.CharLength, &c.Precision, &c.HasDefault, &srcRel, &srcCol); err != nil {
 			rows.Close()
 			return err
 		}
@@ -488,6 +512,7 @@ ORDER BY a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_POSITION`)
 		c.FieldType = int(ft.Int64)
 		c.DBName = trim(name)
 		c.Position = pos
+		c.SourceRel, c.SourceCol = trim(srcRel), trim(srcCol)
 		if pos == retPos[k] {
 			c.Name, c.DBName = APIName(r.DBName), "RESULT"
 			r.Out = []*Column{c}
@@ -498,4 +523,32 @@ ORDER BY a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_POSITION`)
 	}
 	rows.Close()
 	return nil
+}
+
+// linkComputed attaches routines whose input parameters are all declared
+// TYPE OF COLUMN of the same relation to that relation.
+func linkComputed(s *Schema, byDB map[string]*Relation) {
+	for _, name := range s.RoutineNames() {
+		rt := s.Routines[name]
+		if len(rt.In) == 0 || len(rt.Out) == 0 {
+			continue
+		}
+		parent := byDB[rt.In[0].SourceRel]
+		if parent == nil {
+			continue
+		}
+		var cols []string
+		for _, p := range rt.In {
+			if p.SourceRel != parent.DBName || parent.Column(p.SourceCol) == nil {
+				cols = nil
+				break
+			}
+			cols = append(cols, p.SourceCol)
+		}
+		if cols == nil {
+			continue
+		}
+		rt.Parent, rt.ParentCols = parent, cols
+		parent.Computed = append(parent.Computed, rt)
+	}
 }

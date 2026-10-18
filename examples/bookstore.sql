@@ -105,6 +105,47 @@ BEGIN
          || ' as ' || CURRENT_ROLE;
 END^
 
+/*
+ * Computed relationships and fields: routines whose input parameters are all
+ * declared TYPE OF COLUMN <table>.<column> can be embedded in that table.
+ */
+
+-- to-many: GET /books?select=title,similar_books(title)
+CREATE PROCEDURE similar_books (book_id TYPE OF COLUMN books.id, author_id TYPE OF COLUMN books.author_id)
+RETURNS (id INTEGER, title VARCHAR(200))
+AS
+BEGIN
+  FOR SELECT b.id, b.title FROM books b
+      WHERE b.author_id = :author_id AND b.id <> :book_id
+      ORDER BY b.id
+      INTO :id, :title
+  DO SUSPEND;
+END^
+
+-- to-one (executable procedure): GET /authors?select=name,author_stats(*)
+CREATE PROCEDURE author_stats (author_id TYPE OF COLUMN authors.id)
+RETURNS (book_count INTEGER, avg_price NUMERIC(10,2))
+AS
+BEGIN
+  SELECT COUNT(*), AVG(b.price) FROM books b WHERE b.author_id = :author_id
+    INTO :book_count, :avg_price;
+END^
+
+-- computed fields: GET /books?select=title,price_with_vat&price_with_vat=gt.10
+CREATE FUNCTION price_with_vat (price TYPE OF COLUMN books.price)
+RETURNS NUMERIC(12,2)
+AS
+BEGIN
+  RETURN price * 1.19;
+END^
+
+CREATE FUNCTION label (title TYPE OF COLUMN books.title, published TYPE OF COLUMN books.published)
+RETURNS VARCHAR(220)
+AS
+BEGIN
+  RETURN title || ' (' || published || ')';
+END^
+
 -- package: GET /rpc/catalog.search?term=god , GET /rpc/catalog.book_count?author_id=1
 CREATE PACKAGE catalog AS
 BEGIN
@@ -180,6 +221,10 @@ GRANT EXECUTE ON PROCEDURE books_by_country TO ROLE web_anon;
 GRANT EXECUTE ON FUNCTION add_vat TO ROLE web_anon;
 GRANT EXECUTE ON FUNCTION whoami TO ROLE web_anon;
 GRANT EXECUTE ON PACKAGE catalog TO ROLE web_anon;
+GRANT EXECUTE ON PROCEDURE similar_books TO ROLE web_anon;
+GRANT EXECUTE ON PROCEDURE author_stats TO ROLE web_anon;
+GRANT EXECUTE ON FUNCTION price_with_vat TO ROLE web_anon;
+GRANT EXECUTE ON FUNCTION label TO ROLE web_anon;
 
 GRANT ALL ON authors TO ROLE web_user;
 GRANT ALL ON books TO ROLE web_user;
@@ -194,7 +239,13 @@ GRANT EXECUTE ON PROCEDURE place_order TO ROLE web_user;
 GRANT EXECUTE ON FUNCTION add_vat TO ROLE web_user;
 GRANT EXECUTE ON FUNCTION whoami TO ROLE web_user;
 GRANT EXECUTE ON PACKAGE catalog TO ROLE web_user;
+GRANT EXECUTE ON PROCEDURE similar_books TO ROLE web_user;
+GRANT EXECUTE ON PROCEDURE author_stats TO ROLE web_user;
+GRANT EXECUTE ON FUNCTION price_with_vat TO ROLE web_user;
+GRANT EXECUTE ON FUNCTION label TO ROLE web_user;
 GRANT SELECT ON books TO PACKAGE catalog;
+GRANT SELECT ON books TO PROCEDURE similar_books;
+GRANT SELECT ON books TO PROCEDURE author_stats;
 -- the procedure writes to these tables with its own privileges
 GRANT INSERT ON orders TO PROCEDURE place_order;
 GRANT INSERT ON order_items TO PROCEDURE place_order;

@@ -12,11 +12,13 @@ const (
 	ManyToOne  = iota // parent has the foreign key -> child is an object
 	OneToMany         // child has the foreign key -> child is an array
 	ManyToMany        // linked through a junction table -> array
+	Computed          // a procedure whose inputs are TYPE OF COLUMN the parent
 )
 
 // Field is one output column.
 type Field struct {
-	Col  *schema.Column // nil for count()
+	Col  *schema.Column  // result metadata (countColumn for count())
+	Fn   *schema.Routine // computed field: a function of the row's columns
 	Key  string
 	Cast string // Firebird cast target, already validated
 	Agg  string // count, sum, avg, min, max
@@ -32,8 +34,9 @@ type Join struct {
 	ParentCols []string           // parent columns matched (DB names)
 	ChildCols  []string           // child (or junction for M2M) columns matched
 	Junction   *schema.Relation
-	JChildCols []string // M2M: junction columns pointing to the child
-	ChildRef   []string // M2M: child columns referenced by the junction
+	JChildCols []string        // M2M: junction columns pointing to the child
+	ChildRef   []string        // M2M: child columns referenced by the junction
+	Routine    *schema.Routine // Computed: the procedure called per parent key
 	Single     bool
 }
 
@@ -122,6 +125,20 @@ func castColumn(c *schema.Column, cast string) *schema.Column {
 		n.FieldType = schema.TVarchar
 	}
 	return &n
+}
+
+// fieldFor resolves a column name, or the name of a computed field (a
+// function whose arguments are TYPE OF COLUMN this relation).
+func fieldFor(rel *schema.Relation, name string) (Field, bool) {
+	if c := rel.Column(name); c != nil {
+		return Field{Col: c, Key: c.Name}, true
+	}
+	if rt := rel.ComputedField(name); rt != nil {
+		c := *rt.Out[0]
+		c.Name, c.DBName = rt.Name, ""
+		return Field{Col: &c, Fn: rt, Key: rt.Name}, true
+	}
+	return Field{}, false
 }
 
 // BuildRead resolves a read request against the schema.
@@ -218,15 +235,16 @@ func resolveNode(s *schema.Schema, n *ReadNode, sel []*SelectItem, p *Params, pa
 			}
 			f := Field{Agg: item.Agg, Key: item.Key(), Col: countColumn}
 			if item.Name != "" {
-				c := n.Rel.Column(item.Name)
-				if c == nil {
+				base, ok := fieldFor(n.Rel, item.Name)
+				if !ok {
 					return &Error{Status: 400, Code: "FBRST204",
 						Message: fmt.Sprintf("column %q does not exist in %q", item.Name, n.Rel.Name)}
 				}
+				f.Fn = base.Fn
 				if item.Agg != "count" {
-					f.Col = c
+					f.Col = base.Col
 				} else {
-					f.Col = &schema.Column{Name: c.Name, DBName: c.DBName, FieldType: schema.TBigint}
+					f.Col = &schema.Column{Name: base.Col.Name, DBName: base.Col.DBName, FieldType: schema.TBigint}
 				}
 			}
 			if item.Cast != "" {
@@ -238,14 +256,13 @@ func resolveNode(s *schema.Schema, n *ReadNode, sel []*SelectItem, p *Params, pa
 			addField(f)
 			continue
 		}
-		c := n.Rel.Column(item.Name)
-		if c == nil {
+		f, ok := fieldFor(n.Rel, item.Name)
+		if !ok {
 			return &Error{Status: 400, Code: "FBRST204",
 				Message: fmt.Sprintf("column %q does not exist in %q", item.Name, n.Rel.Name)}
 		}
-		f := Field{Col: c, Key: item.Key()}
-		if item.Alias == "" {
-			f.Key = c.Name
+		if item.Alias != "" {
+			f.Key = item.Alias
 		}
 		if item.Cast != "" {
 			if _, ok := castTypes[item.Cast]; !ok {
@@ -255,8 +272,12 @@ func resolveNode(s *schema.Schema, n *ReadNode, sel []*SelectItem, p *Params, pa
 		}
 		addField(f)
 	}
+	if n.Join != nil && n.Join.Kind == Computed && n.Join.Single &&
+		(len(n.Where) > 0 || len(n.Order) > 0 || n.Limit >= 0 || n.Offset > 0 || n.HasAggregates()) {
+		return badRequest("FBRST120", "%q returns a single row: filters, order, paging and aggregates are not supported on it", n.Key)
+	}
 	for _, o := range n.Order {
-		if n.Rel.Column(o.Field) == nil {
+		if _, ok := fieldFor(n.Rel, o.Field); !ok {
 			return badRequest("FBRST204", "order column %q does not exist in %q", o.Field, n.Rel.Name)
 		}
 	}
@@ -339,6 +360,15 @@ func resolveEmbed(s *schema.Schema, parent *ReadNode, item *SelectItem) (*ReadNo
 					JChildCols: toChild.FromCols, ChildRef: toChild.ToCols}, "many-to-many via " + j.Name})
 			}
 		}
+	}
+	// computed relationships: procedures taking TYPE OF COLUMN <parent>.<col> arguments
+	for _, rt := range pr.Computed {
+		if rt.Kind == schema.Function || (rt.Name != item.Name && rt.DBName != item.Name) {
+			continue
+		}
+		cands = append(cands, candidate{rt.AsRelation(), &Join{Kind: Computed, Routine: rt,
+			ParentCols: rt.ParentCols, ChildCols: rt.ParentCols, Single: rt.Kind == schema.Executable},
+			"computed relationship via " + rt.Name})
 	}
 	if len(cands) == 0 {
 		return nil, &Error{Status: 400, Code: "FBRST200",

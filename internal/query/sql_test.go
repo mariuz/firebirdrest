@@ -151,3 +151,56 @@ func TestAggregatesDisabled(t *testing.T) {
 		t.Error("aggregate accepted while disabled")
 	}
 }
+
+func computedSchema() *schema.Schema {
+	sc := testSchema()
+	books := sc.Relations["books"]
+	similar := &schema.Routine{Name: "similar", DBName: "SIMILAR", Kind: schema.Selectable,
+		In:     []*schema.Column{{Name: "author_id", DBName: "AUTHOR_ID", FieldType: schema.TInteger}},
+		Out:    []*schema.Column{{Name: "title", DBName: "TITLE", FieldType: schema.TVarchar}},
+		Parent: books, ParentCols: []string{"AUTHOR_ID"}}
+	vat := &schema.Routine{Name: "vat", DBName: "VAT", Kind: schema.Function,
+		In:     []*schema.Column{{Name: "id", DBName: "ID", FieldType: schema.TInteger}},
+		Out:    []*schema.Column{{Name: "vat", DBName: "RESULT", FieldType: schema.TDouble}},
+		Parent: books, ParentCols: []string{"ID"}}
+	books.Computed = []*schema.Routine{similar, vat}
+	sc.Routines = map[string]*schema.Routine{"similar": similar, "vat": vat}
+	return sc
+}
+
+func TestComputedFieldSQL(t *testing.T) {
+	sc := computedSchema()
+	v, _ := url.ParseQuery("select=id,vat&vat=gt.1&order=vat.desc")
+	p, _ := ParseQuery(v, nil)
+	n, err := BuildRead(sc, sc.Relations["books"], p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := FieldExpr("t0", n.Fields[1]); got != `"VAT"(t0."ID")` {
+		t.Errorf("field expr %s", got)
+	}
+	b := &Builder{}
+	b.WriteWhere(n, "t0", nil)
+	b.WriteOrder(n, "t0")
+	if !strings.Contains(b.String(), `"VAT"(t0."ID") > ?`) || !strings.Contains(b.String(), `ORDER BY "VAT"(t0."ID") DESC`) {
+		t.Errorf("sql %s", b.String())
+	}
+}
+
+func TestComputedRelationship(t *testing.T) {
+	sc := computedSchema()
+	v, _ := url.ParseQuery("select=id,similar!inner(title)")
+	p, _ := ParseQuery(v, nil)
+	n, err := BuildRead(sc, sc.Relations["books"], p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := n.Children[0]
+	if c.Join.Kind != Computed || c.Join.Single || c.Join.Routine.Name != "similar" {
+		t.Fatalf("join %+v", c.Join)
+	}
+	sql, _ := where(t, n)
+	if !strings.Contains(sql, `EXISTS (SELECT 1 FROM "SIMILAR"(t0."AUTHOR_ID") t1`) {
+		t.Errorf("exists %s", sql)
+	}
+}

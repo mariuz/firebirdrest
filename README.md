@@ -20,6 +20,7 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 - **Single static binary** (Go, pure-Go wire protocol driver, no Firebird client library needed)
 - **PostgREST-compatible URL grammar**: `select`, filters, `or`/`and` trees, `order`, `limit`/`offset`, `Range`
 - **Resource embedding** through foreign keys: many-to-one, one-to-many, many-to-many, nested, `!inner`, spread (`...rel(cols)`)
+- **Computed fields and relationships**: functions and procedures with `TYPE OF COLUMN` parameters become virtual columns and embeddable resources
 - **Aggregates**: `count()`, `sum()`, `avg()`, `min()`, `max()` with automatic grouping, also inside embeds
 - **Writes**: insert (single/bulk), upsert (`UPDATE OR INSERT` / `MERGE`), `PATCH`, `PUT`, `DELETE`, with `Prefer: return=representation`
 - **Stored procedures and PSQL functions** over `/rpc/…`, including routines in **packages** (`/rpc/pkg.name`)
@@ -206,6 +207,44 @@ grouping. With `Prefer: count=exact` the total is the number of groups. Firebird
 applies: `avg()` of an integer column is an integer. Disable aggregates with
 `db-aggregates-enabled = false`.
 
+#### Computed fields and relationships
+
+A routine whose input parameters are **all declared `TYPE OF COLUMN <table>.<column>`** of the
+same table is attached to that table. You don't need to configure anything else:
+
+| Routine | Becomes | Example |
+|---|---|---|
+| PSQL function | a **computed field**, usable in `select`, filters, `order` and aggregates | `books?select=title,price_with_vat&price_with_vat=gt.10` |
+| Selectable procedure (with `SUSPEND`) | a **to-many** relationship (array) | `books?select=title,similar_books(title)` |
+| Executable procedure | a **to-one** relationship (object, from its output parameters) | `authors?select=name,author_stats(*)` |
+
+```sql
+CREATE FUNCTION price_with_vat (price TYPE OF COLUMN books.price) RETURNS NUMERIC(12,2)
+AS BEGIN RETURN price * 1.19; END
+
+CREATE PROCEDURE similar_books (book_id TYPE OF COLUMN books.id, author_id TYPE OF COLUMN books.author_id)
+RETURNS (id INTEGER, title VARCHAR(200))
+AS BEGIN
+  FOR SELECT b.id, b.title FROM books b WHERE b.author_id = :author_id AND b.id <> :book_id
+      INTO :id, :title DO SUSPEND;
+END
+```
+
+```
+GET /books?select=id,label,price_with_vat&order=price_with_vat.desc
+GET /books?select=title,similar_books(title)&similar_books.title=starting.S
+GET /books?select=title,similar_books!inner(title)        # only books that have similar ones
+GET /books?select=title,similar_books(count)
+GET /authors?select=name,stats:author_stats(book_count,avg_price)
+GET /authors?select=name,...author_stats(book_count)      # spread a to-one relationship
+```
+
+Computed fields are not part of `select=*`; name them explicitly. Selectable procedures are
+called once per distinct parent key in a single batched query
+(`... FROM (SELECT DISTINCT keys ...) k CROSS JOIN proc(k.col) t0`). Executable procedures are
+called once per distinct key and don't support filters, `order`, paging or `!inner`. The
+routines remain callable through `/rpc` too.
+
 ### Writing
 
 ```sh
@@ -349,7 +388,8 @@ FirebirdREST borrows PostgREST's interface, but Firebird is not PostgreSQL:
 - Firebird has no schemas, so all tables/views/routines are in one namespace (`/table`, `/rpc/name`).
   Packaged routines use `/rpc/package.name`.
 - No JSON operators (`->`, `->>`), array or range operators, or full-text `fts`. Firebird-specific `containing`, `starting` and `similar` are added instead.
-- Spread embeds only work on to-one relationships. Computed relationships are not implemented yet.
+- Spread embeds only work on to-one relationships.
+- Computed fields and relationships are declared with `TYPE OF COLUMN` parameters, because Firebird routines can't take a table row as an argument.
 - Aggregates are on by default (PostgREST ships with them off).
 - Embedded children are fetched with one batched `IN (...)` query per embed level instead of a single
   SQL statement. Per-parent `limit`/`offset` on embeds is applied after fetching.

@@ -245,8 +245,30 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 	if len(sel) == 0 {
 		sel = []string{"1"}
 	}
+	computed := n.Join != nil && n.Join.Kind == Computed && keys != nil
+	if computed {
+		matchAlias = "k"
+		sel = sel[:len(sel)-len(matchCols)]
+		for _, mc := range matchCols {
+			sel = append(sel, col("k", mc))
+		}
+	}
 	b.W("SELECT ", strings.Join(sel, ", "), " FROM ")
-	b.WriteFrom(n, alias)
+	if computed {
+		// distinct parent keys, each passed to the procedure (a lateral call):
+		// (SELECT DISTINCT k.a FROM parent k WHERE k.a IN (...)) k CROSS JOIN proc(k.a) t0
+		rt := n.Join.Routine
+		kcols := make([]string, len(matchCols))
+		for i, mc := range matchCols {
+			kcols[i] = col("k", mc)
+		}
+		b.W("(SELECT DISTINCT ", strings.Join(kcols, ", "), " FROM ", schema.Quote(rt.Parent.DBName), " k WHERE ")
+		b.WriteKeyMatch("k", matchCols, keys)
+		b.W(") k CROSS JOIN ", callExpr(rt, "k"), " ", alias)
+		keys = nil // already applied
+	} else {
+		b.WriteFrom(n, alias)
+	}
 	if matchAlias == "j0" {
 		j := n.Join
 		b.W(" JOIN ", schema.Quote(j.Junction.DBName), " j0 ON ")
@@ -321,6 +343,41 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 	return out, rs.Err()
 }
 
+// executeComputed runs an executable procedure for one parent key and
+// returns its output parameters as a row (to-one computed relationship).
+func executeComputed(ctx context.Context, q Querier, c *ReadNode, key []any) (*row, error) {
+	rt := c.Join.Routine
+	rs, err := q.QueryContext(ctx, "EXECUTE PROCEDURE "+rt.SQLName()+"("+strings.TrimSuffix(strings.Repeat("?, ", len(key)), ", ")+")", key...)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	if !rs.Next() {
+		return nil, rs.Err()
+	}
+	vals := make([]any, len(rt.Out))
+	ptrs := make([]any, len(vals))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	if err := rs.Scan(ptrs...); err != nil {
+		return nil, err
+	}
+	r := &row{obj: newObj(c)}
+	for _, f := range c.Fields {
+		for i, out := range rt.Out {
+			if out.DBName == f.Col.DBName {
+				v := Output(vals[i], out)
+				if f.Cast != "" {
+					v = Output(vals[i], FieldColumn(f))
+				}
+				r.obj.Set(f.Key, v)
+			}
+		}
+	}
+	return r, rs.Err()
+}
+
 // newObj creates an object with every output key of n in select order, so
 // fields and embeds keep the order they were requested in.
 func newObj(n *ReadNode) *Obj {
@@ -369,6 +426,18 @@ func attachChildren(ctx context.Context, q Querier, n *ReadNode, parents []*row)
 		}
 		groups := map[string][]*row{}
 		var all []*row
+		if c.Join.Kind == Computed && c.Join.Single {
+			for _, k := range keys {
+				r, err := executeComputed(ctx, q, c, k)
+				if err != nil {
+					return err
+				}
+				if r != nil {
+					groups[keyString(k)] = []*row{r}
+				}
+			}
+			keys = nil
+		}
 		for _, chunk := range chunks(keys, chunkSize/width) {
 			rows, err := queryNode(ctx, q, c, "t0", c.Join.ChildCols, chunk, false)
 			if err != nil {

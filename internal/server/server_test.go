@@ -115,6 +115,14 @@ func TestRead(t *testing.T) {
 		// spread embeds and select order
 		{"/books?select=title,...authors(author:name)&id=eq.5", `[{"title":"Solaris","author":"Stanislaw Lem"}]`},
 		{"/books?select=authors(name),id&id=eq.5", `[{"authors":{"name":"Stanislaw Lem"},"id":5}]`},
+		// computed relationships and fields
+		{"/books?select=id,similar_books(title)&id=in.(1,5)&order=id", `[{"id":1,"similar_books":[{"title":"Small Gods"}]},{"id":5,"similar_books":[]}]`},
+		{"/books?select=id,similar_books!inner(id)&author_id=eq.2&order=id", `[{"id":3,"similar_books":[{"id":4}]},{"id":4,"similar_books":[{"id":3}]}]`},
+		{"/books?select=id,similar_books(count)&id=eq.5", `[{"id":5,"similar_books":[{"count":0}]}]`},
+		{"/authors?select=name,author_stats(*)&id=eq.3", `[{"name":"Stanislaw Lem","author_stats":{"book_count":1,"avg_price":10.40}}]`},
+		{"/authors?select=name,...author_stats(n:book_count)&id=eq.1", `[{"name":"Terry Pratchett","n":2}]`},
+		{"/books?select=id,price_with_vat,label&id=eq.4", `[{"id":4,"price_with_vat":8.63,"label":"A Wizard of Earthsea (1968)"}]`},
+		{"/books?select=id&price_with_vat=gt.12&order=price_with_vat.desc", `[{"id":3},{"id":5}]`},
 		// packaged routines
 		{"/rpc/catalog.search?term=god", `[{"id":2,"title":"Small Gods"}]`},
 		{"/rpc/catalog.book_count?author_id=2", `2`},

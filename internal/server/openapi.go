@@ -49,6 +49,18 @@ func relationSchema(r *schema.Relation, sc *schema.Schema) m {
 			required = append(required, c.Name)
 		}
 	}
+	for _, rt := range r.Computed {
+		switch rt.Kind {
+		case schema.Function:
+			cs := columnSchema(rt.Out[0])
+			cs["readOnly"] = true
+			cs["description"] = cs["description"].(string) + " (computed by function " + rt.Name + ")"
+			props[rt.Name] = cs
+		default:
+			props[rt.Name] = m{"readOnly": true, "description": "computed relationship (" + rt.Kind +
+				" procedure " + rt.Name + "); embed with select=" + rt.Name + "(...)"}
+		}
+	}
 	out := m{"type": "object", "properties": props}
 	if len(required) > 0 {
 		out["required"] = required

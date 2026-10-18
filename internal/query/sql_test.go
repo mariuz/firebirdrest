@@ -135,11 +135,15 @@ func TestSpreadAndLayout(t *testing.T) {
 	if got := n.OutKeys(); strings.Join(got, ",") != "authors,title,id" {
 		t.Errorf("keys %v", got)
 	}
+	n = build(t, "authors", "select=name,...books(title)")
+	if c := n.Children[0]; !c.Spread || c.Join.Single {
+		t.Errorf("to-many spread: %+v", c)
+	}
 	sc := testSchema()
-	v, _ := url.ParseQuery("select=name,...books(title)")
+	v, _ := url.ParseQuery("select=name,...books(name:title)")
 	p, _ := ParseQuery(v, nil)
 	if _, err := BuildRead(sc, sc.Relations["authors"], p, 0); err == nil {
-		t.Error("to-many spread accepted")
+		t.Error("duplicate key accepted")
 	}
 }
 

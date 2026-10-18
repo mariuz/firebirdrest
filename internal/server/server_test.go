@@ -115,6 +115,12 @@ func TestRead(t *testing.T) {
 		// spread embeds and select order
 		{"/books?select=title,...authors(author:name)&id=eq.5", `[{"title":"Solaris","author":"Stanislaw Lem"}]`},
 		{"/books?select=authors(name),id&id=eq.5", `[{"authors":{"name":"Stanislaw Lem"},"id":5}]`},
+		// to-many spread: one array per column, or plain values for aggregates
+		{"/authors?select=name,...books(title,price)&books.order=price&id=eq.1", `[{"name":"Terry Pratchett","title":["Small Gods","Guards! Guards!"],"price":[8.50,9.99]}]`},
+		{"/books?select=id,...tags(tag:name)&tags.order=name&id=eq.1", `[{"id":1,"tag":["fantasy","humour"]}]`},
+		{"/authors?select=name,...books(count(),total:price.sum())&id=eq.3", `[{"name":"Stanislaw Lem","count":1,"total":10.40}]`},
+		{"/books?select=id,...similar_books(similar:title)&id=eq.5", `[{"id":5,"similar":[]}]`},
+		{"/authors?select=name,...books(title,...tags(tag:name))&books.order=id&id=eq.3", `[{"name":"Stanislaw Lem","title":["Solaris"],"tag":[["science-fiction"]]}]`},
 		// computed relationships and fields
 		{"/books?select=id,similar_books(title)&id=in.(1,5)&order=id", `[{"id":1,"similar_books":[{"title":"Small Gods"}]},{"id":5,"similar_books":[]}]`},
 		{"/books?select=id,similar_books!inner(id)&author_id=eq.2&order=id", `[{"id":3,"similar_books":[{"id":4}]},{"id":4,"similar_books":[{"id":3}]}]`},
@@ -151,6 +157,16 @@ func TestAggregateEdgeCases(t *testing.T) {
 	r = do(t, ts, "GET", "/books?select=in_stock,count()", "", "Prefer", "count=exact")
 	if got := r.header.Get("Content-Range"); got != "0-1/2" {
 		t.Errorf("content-range %q", got)
+	}
+	// an author without books: empty arrays, or a zero count
+	r = do(t, ts, "POST", "/authors?select=name,...books(title)", `{"name":"Nobody"}`,
+		"Authorization", user, "Prefer", "return=representation", "Prefer", "tx=rollback")
+	jsonEq(t, r.body, `[{"name":"Nobody","title":[]}]`)
+	r = do(t, ts, "POST", "/authors?select=name,...books(count())", `{"name":"Nobody"}`,
+		"Authorization", user, "Prefer", "return=representation", "Prefer", "tx=rollback")
+	jsonEq(t, r.body, `[{"name":"Nobody","count":0}]`)
+	if r := do(t, ts, "GET", "/authors?select=name,...books(name:title)", ""); r.status != 400 {
+		t.Errorf("duplicate key: %d", r.status)
 	}
 	if r := do(t, ts, "GET", "/rpc/catalog.internal_helper", ""); r.status != 404 {
 		t.Errorf("private package function exposed: %d", r.status)

@@ -179,14 +179,28 @@ GET /books?select=title,tags(name)&tags=is.null           # books with no tags
 GET /books?select=title,tags(name)&tags=not.is.null
 ```
 
-A spread embed (`...`) merges the columns of a to-one resource into the parent object:
+A spread embed (`...`) merges the columns of a related resource into the parent object. For a
+to-one resource you get its values:
 
 ```
 GET /books?select=title,...authors(author:name,country)
 [{"title":"Guards! Guards!","author":"Terry Pratchett","country":"UK"}, ...]
 ```
 
-Keys appear in the order they are listed in `select`.
+For a to-many resource each column becomes an array with one entry per related row. The embed's
+`order`, `limit` and filters apply:
+
+```
+GET /authors?select=name,...books(title,price)&books.order=price.desc
+[{"name":"Terry Pratchett","title":["Guards! Guards!","Small Gods"],"price":[9.99,8.50]}, ...]
+
+GET /books?select=title,...tags(tag:name)               # many-to-many: "tag":["fantasy","humour"]
+GET /authors?select=name,...books(count(),total:price.sum())
+[{"name":"Terry Pratchett","count":2,"total":18.49}, ...]   # aggregates spread as plain values
+```
+
+Keys appear in the order they are listed in `select`. If two keys would collide (say `name` from
+both tables), the request is rejected; rename one with an alias such as `...tags(tag:name)`.
 
 #### Aggregates
 
@@ -388,7 +402,6 @@ FirebirdREST borrows PostgREST's interface, but Firebird is not PostgreSQL:
 - Firebird has no schemas, so all tables/views/routines are in one namespace (`/table`, `/rpc/name`).
   Packaged routines use `/rpc/package.name`.
 - No JSON operators (`->`, `->>`), array or range operators, or full-text `fts`. Firebird-specific `containing`, `starting` and `similar` are added instead.
-- Spread embeds only work on to-one relationships.
 - Computed fields and relationships are declared with `TYPE OF COLUMN` parameters, because Firebird routines can't take a table row as an argument.
 - Aggregates are on by default (PostgREST ships with them off).
 - Embedded children are fetched with one batched `IN (...)` query per embed level instead of a single

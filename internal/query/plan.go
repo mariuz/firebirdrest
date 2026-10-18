@@ -208,12 +208,7 @@ func resolveNode(s *schema.Schema, n *ReadNode, sel []*SelectItem, p *Params, pa
 			if err := resolveNode(s, child, item.Children, p, childPath); err != nil {
 				return err
 			}
-			if item.Spread {
-				if !child.Join.Single {
-					return badRequest("FBRST119", "spread (...%s) only works on to-one relationships", item.Name)
-				}
-				child.Spread = true
-			}
+			child.Spread = item.Spread
 			n.Children = append(n.Children, child)
 			n.Layout = append(n.Layout, -len(n.Children))
 			continue
@@ -271,6 +266,15 @@ func resolveNode(s *schema.Schema, n *ReadNode, sel []*SelectItem, p *Params, pa
 			f.Cast = item.Cast
 		}
 		addField(f)
+	}
+	seen := map[string]bool{}
+	for _, k := range n.OutKeys() {
+		if seen[k] {
+			return &Error{Status: 400, Code: "FBRST121",
+				Message: fmt.Sprintf("the key %q appears more than once in the result", k),
+				Hint:    "rename one of them with an alias, e.g. ...tags(tag:name)"}
+		}
+		seen[k] = true
 	}
 	if n.Join != nil && n.Join.Kind == Computed && n.Join.Single &&
 		(len(n.Where) > 0 || len(n.Order) > 0 || n.Limit >= 0 || n.Offset > 0 || n.HasAggregates()) {

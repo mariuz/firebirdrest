@@ -37,6 +37,16 @@ func (o *Obj) Set(k string, v any) {
 	o.Vals = append(o.Vals, v)
 }
 
+// Get returns the value of key k, or nil.
+func (o *Obj) Get(k string) any {
+	for i, key := range o.Keys {
+		if key == k {
+			return o.Vals[i]
+		}
+	}
+	return nil
+}
+
 // MarshalJSON writes the object with keys in order.
 func (o *Obj) MarshalJSON() ([]byte, error) {
 	var sb strings.Builder
@@ -385,6 +395,20 @@ func newObj(n *ReadNode) *Obj {
 	return &Obj{Keys: keys, Vals: make([]any, len(keys))}
 }
 
+// isAggregateOnly is true when every field of c is an aggregate, so c yields
+// one summary row per parent.
+func isAggregateOnly(c *ReadNode) bool {
+	if len(c.Fields) == 0 || len(c.Children) > 0 {
+		return false
+	}
+	for _, f := range c.Fields {
+		if f.Agg == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // emptyAggregate is the value of an aggregate-only embed with no rows,
 // e.g. {"count":0} for books(count) of an author without books.
 func emptyAggregate(c *ReadNode) *Obj {
@@ -469,12 +493,28 @@ func attachChildren(ctx context.Context, q Querier, n *ReadNode, parents []*row)
 				g = g[:c.Limit]
 			}
 			switch {
-			case c.Spread:
+			case c.Spread && (c.Join.Single || isAggregateOnly(c)):
+				// one row at most: merge its values (to-one, or an aggregate summary)
+				src := (*Obj)(nil)
 				if len(g) > 0 {
-					for i, k := range g[0].obj.Keys {
-						p.obj.Set(k, g[0].obj.Vals[i])
+					src = g[0].obj
+				} else if !c.Join.Single {
+					src = emptyAggregate(c)
+				}
+				if src != nil {
+					for i, k := range src.Keys {
+						p.obj.Set(k, src.Vals[i])
 					}
 				} // otherwise the placeholders stay null
+			case c.Spread:
+				// to-many spread: every key becomes an array of the related rows' values
+				for _, k := range c.OutKeys() {
+					vals := make([]any, len(g))
+					for i, r := range g {
+						vals[i] = r.obj.Get(k)
+					}
+					p.obj.Set(k, vals)
+				}
 			case c.Join.Single:
 				if len(g) == 0 {
 					p.obj.Set(c.Key, nil)

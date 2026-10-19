@@ -102,6 +102,30 @@ func TestParseOrder(t *testing.T) {
 	}
 }
 
+func TestParseRelatedOrder(t *testing.T) {
+	got, err := ParseOrder("authors(name).desc.nullslast,title,author(\"full name\")")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []OrderTerm{
+		{Embed: "authors", Field: "name", Desc: true, Nulls: "last"},
+		{Field: "title"},
+		{Embed: "author", Field: "full name"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v", got)
+	}
+	// a quoted column name may contain parentheses
+	if got, err := ParseOrder(`"odd(name)".desc`); err != nil || got[0].Embed != "" || got[0].Field != "odd(name)" {
+		t.Errorf("quoted: %+v %v", got, err)
+	}
+	for _, bad := range []string{"authors()", "(name)", "authors(a,b)", "authors(publisher(name))"} {
+		if _, err := ParseOrder(bad); err == nil {
+			t.Errorf("%s: expected error", bad)
+		}
+	}
+}
+
 func TestParseQuery(t *testing.T) {
 	v, _ := url.ParseQuery("select=id,orders(id)&id=gt.1&id=lt.9&orders.status=eq.new&orders.order=id.desc&orders.limit=2&limit=10&offset=5&not.or=(a.eq.1,b.eq.2)&country=UK")
 	p, err := ParseQuery(v, func(k string) bool { return k == "country" })

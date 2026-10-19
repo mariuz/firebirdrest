@@ -81,6 +81,7 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST123` | aggregates are disabled |
 | `FBRST124` | upsert without primary key or `on_conflict` |
 | `FBRST125` | invalid path |
+| `FBRST126` | `order=embed(column)` on a to-many embed, or together with aggregates |
 | `FBRST200` | no relationship between the tables |
 | `FBRST201` | several relationships, `!hint` needed |
 | `FBRST202` | unknown procedure or function, or unknown argument |

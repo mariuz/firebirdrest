@@ -6,6 +6,9 @@ All notable changes to FirebirdREST are listed here. The project follows
 ## [Unreleased]
 
 ### Added
+- Ordering by a column of a to-one embed, as in PostgREST: `order=authors(name).desc`. It works at
+  any level (`books.order=authors(name)`), by alias and on spread embeds. To-many embeds are
+  refused with `FBRST126`.
 - CI runs the integration suite against the Firebird 6 snapshot (`firebirdsql/firebird:6-snapshot`)
   on every push and weekly. The job may fail without failing the build until Firebird 6 is released.
 

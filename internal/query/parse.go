@@ -58,9 +58,14 @@ type Node struct {
 
 // OrderTerm is one entry of order=.
 type OrderTerm struct {
+	// Embed names a to-one embedded resource for a related order, as in
+	// order=authors(name): the rows are ordered by that resource's Field.
+	Embed string
 	Field string
 	Desc  bool
 	Nulls string // "", "first", "last"
+
+	child *ReadNode // the resolved Embed (set by the planner)
 }
 
 // Params holds everything parsed from the query string.
@@ -296,6 +301,17 @@ func ParseOrder(s string) ([]OrderTerm, error) {
 		}
 		parts := splitTop(item, '.')
 		t := OrderTerm{Field: unquote(parts[0])}
+		if open := strings.IndexByte(parts[0], '('); open >= 0 && !strings.HasPrefix(parts[0], `"`) {
+			// related order: embed(column)
+			if open == 0 || !strings.HasSuffix(parts[0], ")") {
+				return nil, badRequest("FBRST101", "invalid related order %q: use embed(column)", parts[0])
+			}
+			t.Embed = unquote(parts[0][:open])
+			t.Field = unquote(strings.TrimSpace(parts[0][open+1 : len(parts[0])-1]))
+			if t.Embed == "" || t.Field == "" || strings.ContainsAny(t.Field, "(),") {
+				return nil, badRequest("FBRST101", "invalid related order %q: use embed(column)", parts[0])
+			}
+		}
 		for _, mod := range parts[1:] {
 			switch mod {
 			case "asc":

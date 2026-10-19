@@ -278,17 +278,23 @@ func (b *Builder) writeExists(parent *ReadNode, palias string, c *ReadNode, nega
 }
 
 // WriteOrder writes ORDER BY when terms are present.
-func (b *Builder) WriteOrder(n *ReadNode, alias string) {
+func (b *Builder) WriteOrder(n *ReadNode, alias string) error {
 	if len(n.Order) == 0 {
-		return
+		return nil
 	}
 	b.W(" ORDER BY ")
 	for i, o := range n.Order {
 		if i > 0 {
 			b.W(", ")
 		}
-		f, _ := fieldFor(n.Rel, o.Field)
-		b.W(baseExpr(alias, f))
+		if o.child != nil {
+			if err := b.writeRelatedValue(alias, o.child, o.Field); err != nil {
+				return err
+			}
+		} else {
+			f, _ := fieldFor(n.Rel, o.Field)
+			b.W(baseExpr(alias, f))
+		}
 		if o.Desc {
 			b.W(" DESC")
 		}
@@ -299,6 +305,29 @@ func (b *Builder) WriteOrder(n *ReadNode, alias string) {
 			b.W(" NULLS LAST")
 		}
 	}
+	return nil
+}
+
+// writeRelatedValue writes a scalar subquery that returns column field of the
+// many-to-one child c for the parent row at palias, or NULL when there is no
+// such row or the embed's own filters exclude it (the embed is then null too).
+func (b *Builder) writeRelatedValue(palias string, c *ReadNode, field string) error {
+	ca := b.nextAlias()
+	f, _ := fieldFor(c.Rel, field)
+	b.W("(SELECT ", baseExpr(ca, f), " FROM ")
+	b.WriteFrom(c, ca)
+	b.W(" WHERE ")
+	j := c.Join
+	_, err := b.WriteWhere(c, ca, func() {
+		for i := range j.ChildCols {
+			if i > 0 {
+				b.W(" AND ")
+			}
+			b.W(col(ca, j.ChildCols[i]), " = ", col(palias, j.ParentCols[i]))
+		}
+	})
+	b.W(")")
+	return err
 }
 
 // WritePaging writes OFFSET/FETCH (Firebird 3+ syntax). A zero limit is

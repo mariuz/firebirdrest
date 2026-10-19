@@ -185,7 +185,9 @@ func TestComputedFieldSQL(t *testing.T) {
 	}
 	b := &Builder{}
 	b.WriteWhere(n, "t0", nil)
-	b.WriteOrder(n, "t0")
+	if err := b.WriteOrder(n, "t0"); err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(b.String(), `"VAT"(t0."ID") > ?`) || !strings.Contains(b.String(), `ORDER BY "VAT"(t0."ID") DESC`) {
 		t.Errorf("sql %s", b.String())
 	}
@@ -206,5 +208,71 @@ func TestComputedRelationship(t *testing.T) {
 	sql, _ := where(t, n)
 	if !strings.Contains(sql, `EXISTS (SELECT 1 FROM "SIMILAR"(t0."AUTHOR_ID") t1`) {
 		t.Errorf("exists %s", sql)
+	}
+}
+
+func orderSQL(t *testing.T, n *ReadNode) string {
+	t.Helper()
+	b := &Builder{}
+	if err := b.WriteOrder(n, "t0"); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
+func TestRelatedOrderSQL(t *testing.T) {
+	n := build(t, "books", "select=title,authors(name)&order=authors(name).desc.nullslast,id")
+	want := ` ORDER BY (SELECT t1."NAME" FROM "AUTHORS" t1 WHERE (t1."ID" = t0."AUTHOR_ID")) DESC NULLS LAST, t0."ID"`
+	if got := orderSQL(t, n); got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+
+	// by alias, and with the embed's own filter, which nulls the value as it nulls the embed
+	n = build(t, "books", "select=title,writer:authors(name)&writer.name=like.T*&order=writer(name)")
+	b := &Builder{}
+	if err := b.WriteOrder(n, "t0"); err != nil {
+		t.Fatal(err)
+	}
+	want = ` ORDER BY (SELECT t1."NAME" FROM "AUTHORS" t1 WHERE ((t1."NAME" LIKE ?)) AND (t1."ID" = t0."AUTHOR_ID"))`
+	if b.String() != want || len(b.Args) != 1 || b.Args[0] != "T%" {
+		t.Errorf("got %s %v", b.String(), b.Args)
+	}
+
+	// a spread to-one embed works too
+	n = build(t, "books", "select=title,...authors(name)&order=authors(name)")
+	if got := orderSQL(t, n); !strings.Contains(got, `(SELECT t1."NAME" FROM "AUTHORS" t1`) {
+		t.Errorf("spread: %s", got)
+	}
+
+	// the embedded rows of a to-many embed can be ordered by their own to-one embed
+	n = build(t, "authors", "select=name,books(title,authors(name))&books.order=authors(name)")
+	if got := orderSQL(t, n.Children[0]); !strings.Contains(got, `(SELECT t1."NAME" FROM "AUTHORS" t1 WHERE (t1."ID" = t0."AUTHOR_ID"))`) {
+		t.Errorf("nested: %s", got)
+	}
+}
+
+func TestRelatedOrderErrors(t *testing.T) {
+	sc := testSchema()
+	for qs, code := range map[string]string{
+		"select=title&order=authors(name)":                       "FBRST108", // not embedded
+		"select=title,authors(name)&order=authors(nope)":         "FBRST204", // unknown column
+		"select=title,authors(name),count()&order=authors(name)": "FBRST126", // with aggregates
+	} {
+		v, _ := url.ParseQuery(qs)
+		p, err := ParseQuery(v, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = BuildRead(sc, sc.Relations["books"], p, 0)
+		if e, ok := err.(*Error); !ok || e.Code != code {
+			t.Errorf("%s: got %v, want %s", qs, err, code)
+		}
+	}
+	// to-many: an author has many books
+	v, _ := url.ParseQuery("select=name,books(title)&order=books(title)")
+	p, _ := ParseQuery(v, nil)
+	_, err := BuildRead(sc, sc.Relations["authors"], p, 0)
+	if e, ok := err.(*Error); !ok || e.Code != "FBRST126" {
+		t.Errorf("to-many: got %v", err)
 	}
 }

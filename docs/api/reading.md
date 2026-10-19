@@ -75,6 +75,30 @@ Inside a tree, negate a single condition with `column.not.operator.value`.
 
 Without `order`, rows come in whatever order Firebird returns them.
 
+### Ordering by an embedded resource
+
+Order by a column of a to-one (many-to-one) embed with `embed(column)`. The embed must be in
+`select`; use its alias if it has one:
+
+```
+GET /books?select=title,authors(name)&order=authors(name).desc,title
+GET /books?select=title,writer:authors(name,born)&order=writer(born)
+GET /books?select=title,...authors(name)&order=authors(name)
+```
+
+It works for embedded rows too. This orders each tag's books by their author's name:
+
+```
+GET /tags?select=name,books(title,authors(name))&books.order=authors(name)
+```
+
+Filters on the embed apply: a row whose embed is filtered out, and so returned as `null`, sorts
+as `NULL`. Place those rows with `nullsfirst` or `nullslast`.
+
+To-many embeds (one-to-many, many-to-many) have no single value to order by and are refused with
+`FBRST126`; order their rows with `embed.order=` instead (see
+[Resource embedding](embedding.md#filtering-ordering-and-limiting-embeds)).
+
 ## Paging
 
 ```

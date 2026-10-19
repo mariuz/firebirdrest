@@ -138,6 +138,7 @@ table `BOOKS` is `/books` and column `AUTHOR_ID` is `author_id`. Quoted identifi
 | `GET /books?select=name:title,price::text` | rename (`alias:col`) and cast (`col::type`) |
 | `GET /books?id=eq.1` | filter |
 | `GET /books?order=price.desc.nullslast,title` | ordering |
+| `GET /books?select=title,authors(name)&order=authors(name)` | ordering by a to-one embed |
 | `GET /books?limit=10&offset=20` | paging (also `Range: 20-29` header) |
 | `GET /books?select=id` + `Prefer: count=exact` | total in `Content-Range: 0-4/5` |
 

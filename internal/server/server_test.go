@@ -131,6 +131,13 @@ func TestRead(t *testing.T) {
 		{"/authors?select=name,...author_stats(n:book_count)&id=eq.1", `[{"name":"Terry Pratchett","n":2}]`},
 		{"/books?select=id,price_with_vat,label&id=eq.4", `[{"id":4,"price_with_vat":8.63,"label":"A Wizard of Earthsea (1968)"}]`},
 		{"/books?select=id&price_with_vat=gt.12&order=price_with_vat.desc", `[{"id":3},{"id":5}]`},
+		// related order: by a column of a to-one embed
+		{"/books?select=id,authors(name)&order=authors(name),id", `[{"id":5,"authors":{"name":"Stanislaw Lem"}},{"id":1,"authors":{"name":"Terry Pratchett"}},{"id":2,"authors":{"name":"Terry Pratchett"}},{"id":3,"authors":{"name":"Ursula K. Le Guin"}},{"id":4,"authors":{"name":"Ursula K. Le Guin"}}]`},
+		{"/books?select=id,writer:authors(name)&order=writer(name).desc,id&limit=2", `[{"id":3,"writer":{"name":"Ursula K. Le Guin"}},{"id":4,"writer":{"name":"Ursula K. Le Guin"}}]`},
+		{"/books?select=id,...authors(author:name)&order=authors(name).desc,id.desc", `[{"id":4,"author":"Ursula K. Le Guin"},{"id":3,"author":"Ursula K. Le Guin"},{"id":2,"author":"Terry Pratchett"},{"id":1,"author":"Terry Pratchett"},{"id":5,"author":"Stanislaw Lem"}]`},
+		{"/books?select=id,authors(name)&authors.country=eq.UK&order=authors(name).nullsfirst,id", `[{"id":3,"authors":null},{"id":4,"authors":null},{"id":5,"authors":null},{"id":1,"authors":{"name":"Terry Pratchett"}},{"id":2,"authors":{"name":"Terry Pratchett"}}]`},
+		{"/books?select=id,authors(name)&order=authors(born).desc&author_id=neq.2&limit=1", `[{"id":1,"authors":{"name":"Terry Pratchett"}}]`},
+		{"/tags?select=name,books(id,authors(name))&books.order=authors(name).desc,id&name=eq.fantasy", `[{"name":"fantasy","books":[{"id":4,"authors":{"name":"Ursula K. Le Guin"}},{"id":1,"authors":{"name":"Terry Pratchett"}},{"id":2,"authors":{"name":"Terry Pratchett"}}]}]`},
 		// packaged routines
 		{"/rpc/catalog.search?term=god", `[{"id":2,"title":"Small Gods"}]`},
 		{"/rpc/catalog.book_count?author_id=2", `2`},
@@ -172,6 +179,15 @@ func TestAggregateEdgeCases(t *testing.T) {
 	}
 	if r := do(t, ts, "GET", "/rpc/catalog.internal_helper", ""); r.status != 404 {
 		t.Errorf("private package function exposed: %d", r.status)
+	}
+	// related order: to-one embeds only, and only when embedded
+	for path, code := range map[string]string{
+		"/authors?select=name,books(title)&order=books(title)": "FBRST126",
+		"/books?select=title&order=authors(name)":              "FBRST108",
+	} {
+		if r := do(t, ts, "GET", path, ""); r.status != 400 || !strings.Contains(r.body, `"code":"`+code+`"`) {
+			t.Errorf("%s: %d %s", path, r.status, r.body)
+		}
 	}
 }
 

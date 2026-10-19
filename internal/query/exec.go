@@ -300,7 +300,9 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 			b.W(" GROUP BY ", strings.Join(group, ", "))
 		}
 	}
-	b.WriteOrder(n, alias)
+	if err := b.WriteOrder(n, alias); err != nil {
+		return nil, err
+	}
 	if paging {
 		b.WritePaging(n.Offset, n.Limit)
 	}

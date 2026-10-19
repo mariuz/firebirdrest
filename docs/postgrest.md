@@ -8,7 +8,8 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 - `select` with aliases, casts, embedding, `!hint`, `!inner`, spread (`...`) and aggregates.
 - Filters `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `in`, `is`, `isdistinct`,
   `not.`, and `or`/`and` trees.
-- `order`, `limit`, `offset`, `Range`, `Prefer: count=exact`.
+- `order` (including `order=embed(column)` on to-one embeds), `limit`, `offset`, `Range`,
+  `Prefer: count=exact`.
 - `POST`/`PATCH`/`PUT`/`DELETE`, `Prefer: return=…`, `resolution=…`, `missing=default`,
   `tx=rollback`, `on_conflict`, `columns`.
 - `/rpc/<name>` with `GET` (read-only) and `POST`.
@@ -36,7 +37,6 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 
 - `Prefer: count=planned/estimated` (treated as `exact`).
 - `Accept: application/geo+json`, custom media type handlers.
-- Ordering by columns of embedded resources (`order=authors(name)`).
 - `PATCH`/`DELETE` with `limit`.
 - RPC calls with an array body (`Prefer: params=multiple-objects`) or a single unnamed argument
   (`params=single-object`).

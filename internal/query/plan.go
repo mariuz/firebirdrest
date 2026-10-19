@@ -280,12 +280,51 @@ func resolveNode(s *schema.Schema, n *ReadNode, sel []*SelectItem, p *Params, pa
 		(len(n.Where) > 0 || len(n.Order) > 0 || n.Limit >= 0 || n.Offset > 0 || n.HasAggregates()) {
 		return badRequest("FBRST120", "%q returns a single row: filters, order, paging and aggregates are not supported on it", n.Key)
 	}
-	for _, o := range n.Order {
+	if len(n.Order) > 0 {
+		// copy: the terms come from Params and get resolved per node
+		n.Order = append([]OrderTerm(nil), n.Order...)
+	}
+	for i := range n.Order {
+		o := &n.Order[i]
+		if o.Embed != "" {
+			if err := resolveRelatedOrder(n, o); err != nil {
+				return err
+			}
+			continue
+		}
 		if _, ok := fieldFor(n.Rel, o.Field); !ok {
 			return badRequest("FBRST204", "order column %q does not exist in %q", o.Field, n.Rel.Name)
 		}
 	}
 	return nil
+}
+
+// resolveRelatedOrder links order=embed(column) to the embedded child. As in
+// PostgREST, the embed must be in select and be to-one (many-to-one), so it
+// yields at most one value per row.
+func resolveRelatedOrder(n *ReadNode, o *OrderTerm) error {
+	for _, c := range n.Children {
+		if c.Key != o.Embed && c.Rel.Name != o.Embed {
+			continue
+		}
+		if c.Join == nil || c.Join.Kind != ManyToOne {
+			return &Error{Status: 400, Code: "FBRST126",
+				Message: fmt.Sprintf("a related order on %q is not possible", o.Embed),
+				Details: fmt.Sprintf("%q is a to-many relationship of %q", o.Embed, n.Rel.Name),
+				Hint:    "order by a column of a many-to-one embed, or use " + o.Embed + ".order= to order the embedded rows"}
+		}
+		if n.HasAggregates() {
+			return badRequest("FBRST126", "a related order on %q is not possible together with aggregates", o.Embed)
+		}
+		if _, ok := fieldFor(c.Rel, o.Field); !ok {
+			return badRequest("FBRST204", "order column %q does not exist in %q", o.Field, c.Rel.Name)
+		}
+		o.child = c
+		return nil
+	}
+	return &Error{Status: 400, Code: "FBRST108",
+		Message: fmt.Sprintf("order references %q which is not embedded in select", o.Embed),
+		Hint:    "add " + o.Embed + "(...) to select"}
 }
 
 func sameCols(a, b []string) bool {

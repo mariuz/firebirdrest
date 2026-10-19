@@ -18,6 +18,12 @@ All notable changes to FirebirdREST are listed here. The project follows
   executable procedures and functions an array of results.
 - `Prefer: params=single-object` on `/rpc`: the raw JSON body is passed to a routine's only text
   parameter. The example database has `log_request` for this.
+- `Prefer: count=planned` and `count=estimated`. `planned` estimates a table's rows from the
+  statistics of its unique indexes without reading the table; `estimated` counts exactly up to
+  `db-max-rows` (or 1000) and uses the estimate above. Where no estimate applies (filters, views,
+  procedures, no statistics) the count is exact and `Preference-Applied` says `count=exact`.
+  Unknown `count=` values are ignored instead of being treated as `exact`. The example database
+  computes its index statistics after loading data.
 - CI runs the integration suite against the Firebird 6 snapshot (`firebirdsql/firebird:6-snapshot`)
   on every push and weekly. The job may fail without failing the build until Firebird 6 is released.
 

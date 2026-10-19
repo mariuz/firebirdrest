@@ -90,8 +90,12 @@ func (s *Server) respondRead(rc *reqCtx, n *query.ReadNode) error {
 	}
 	total := int64(-1)
 	if rc.prefer.count != "" {
-		if total, err = query.Count(ctx, rc.tx, n); err != nil {
+		if total, err = s.count(rc, n); err != nil {
 			return err
+		}
+		// an estimate may be behind the rows actually there
+		if seen := int64(n.Offset + len(rows)); len(rows) > 0 && total < seen {
+			total = seen
 		}
 	}
 	rc.w.Header().Set("Content-Range", contentRange(n.Offset, len(rows), total))
@@ -100,7 +104,7 @@ func (s *Server) respondRead(rc *reqCtx, n *query.ReadNode) error {
 	if total >= 0 && int64(n.Offset+len(rows)) < total || (total >= 0 && n.Offset > 0) {
 		status = http.StatusPartialContent
 	}
-	if total >= 0 && n.Offset > 0 && int64(n.Offset) >= total && total > 0 {
+	if total >= 0 && n.Offset > 0 && len(rows) == 0 && int64(n.Offset) >= total && total > 0 {
 		return &query.Error{Status: 416, Code: "FBRST103", Message: "requested range not satisfiable",
 			Details: fmt.Sprintf("offset %d is beyond the %d available rows", n.Offset, total)}
 	}
@@ -611,4 +615,70 @@ func writeLimitedTail(b *query.Builder, n *query.ReadNode) error {
 		b.WriteRows(n)
 	}
 	return nil
+}
+
+// countThreshold is where Prefer: count=estimated switches from an exact
+// count to the estimate: db-max-rows, as in PostgREST, or this default.
+const countThreshold = 1000
+
+// count returns the total for Prefer: count=exact/planned/estimated.
+//
+//   - exact counts every matching row;
+//   - planned uses the estimate from the table's index statistics, which
+//     costs no table scan, but only describes an unfiltered table;
+//   - estimated counts exactly up to a threshold and uses the estimate
+//     beyond it.
+//
+// When no estimate applies (filters, views, procedure results, no index
+// statistics, or an estimate below the rows already counted), the count is
+// exact, and Preference-Applied says count=exact.
+func (s *Server) count(rc *reqCtx, n *query.ReadNode) (int64, error) {
+	ctx := rc.r.Context()
+	mode := rc.prefer.count
+	estimate := func() (int64, bool, error) {
+		if n.From != "" || n.HasAggregates() || hasConditions(n) {
+			return 0, false, nil
+		}
+		return query.EstimateRows(ctx, rc.tx, n.Rel)
+	}
+	switch mode {
+	case "planned":
+		est, ok, err := estimate()
+		if err != nil || ok {
+			return est, err
+		}
+	case "estimated":
+		threshold := s.cfg.DBMaxRows
+		if threshold <= 0 {
+			threshold = countThreshold
+		}
+		c, err := query.CountUpTo(ctx, rc.tx, n, threshold)
+		if err != nil || c <= int64(threshold) {
+			return c, err // exact: within the threshold
+		}
+		est, ok, err := estimate()
+		if err != nil {
+			return 0, err
+		}
+		if ok && est > int64(threshold) {
+			return est, nil
+		}
+	}
+	if mode != "exact" {
+		rc.prefer.setApplied("count", "exact")
+	}
+	return query.Count(ctx, rc.tx, n)
+}
+
+// hasConditions reports whether rows of n are filtered.
+func hasConditions(n *query.ReadNode) bool {
+	if len(n.Where) > 0 {
+		return true
+	}
+	for _, c := range n.Children {
+		if c.Inner {
+			return true
+		}
+	}
+	return false
 }

@@ -30,12 +30,21 @@ const testSecret = "reallyreallyreallyreallyverysafe1234"
 
 func testServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	return testServerWith(t, nil)
+}
+
+// testServerWith starts a test server; change, if not nil, adjusts the config.
+func testServerWith(t *testing.T, change func(*config.Config)) *httptest.Server {
+	t.Helper()
 	uri := os.Getenv("FBREST_TEST_DB_URI")
 	if uri == "" {
 		t.Skip("FBREST_TEST_DB_URI not set")
 	}
 	cfg := &config.Config{DBURI: uri, DBAnonRole: "web_anon", DBPool: 4, DBSafeUpdates: true, DBAggregates: true, DBPreparedStatements: 64, DBRequestContext: "auto",
 		JWTSecret: testSecret, JWTRoleClaim: "role", CORSOrigins: "*"}
+	if change != nil {
+		change(cfg)
+	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s, err := New(context.Background(), cfg, log)
 	if err != nil {
@@ -502,6 +511,43 @@ func TestRPCParams(t *testing.T) {
 		r := do(t, ts, "POST", c.path, c.body, h...)
 		if r.status/100 != 4 || !strings.Contains(r.body, `"code":"`+c.code+`"`) {
 			t.Errorf("%s %s: %d %s", c.prefer, c.path, r.status, r.body)
+		}
+	}
+}
+
+func TestCountPreferences(t *testing.T) {
+	ts := testServer(t)
+	check := func(path, prefer string, status int, contentRange, applied string) {
+		t.Helper()
+		r := do(t, ts, "GET", path, "", "Prefer", prefer)
+		if r.status != status || r.header.Get("Content-Range") != contentRange ||
+			!strings.Contains(r.header.Get("Preference-Applied"), applied) {
+			t.Errorf("%s %s: %d %q %q", prefer, path, r.status, r.header.Get("Content-Range"), r.header.Get("Preference-Applied"))
+		}
+	}
+	// planned: from the index statistics of BOOKS (5 rows when they were computed)
+	check("/books?select=id", "count=planned", 200, "0-4/5", "count=planned")
+	check("/books?select=id&limit=2", "count=planned", 206, "0-1/5", "count=planned")
+	// filtered, a view, aggregates: no estimate applies, the count is exact
+	check("/books?select=id&id=gt.2", "count=planned", 200, "0-2/3", "count=exact")
+	check("/books_with_authors?select=id", "count=planned", 200, "0-4/5", "count=exact")
+	check("/rpc/books_by_country?country=UK", "count=planned", 200, "0-1/2", "count=exact")
+	// estimated: exact within the threshold (db-max-rows, or 1000)
+	check("/books?select=id", "count=estimated", 200, "0-4/5", "count=estimated")
+	check("/books?select=id&id=gt.2", "count=estimated", 200, "0-2/3", "count=estimated")
+	// unknown values are ignored
+	check("/books?select=id", "count=approximate", 200, "0-4/*", "")
+
+	// with db-max-rows = 2, estimated switches to the estimate above 2 rows
+	small := testServerWith(t, func(c *config.Config) { c.DBMaxRows = 2 })
+	for _, c := range []struct{ path, cr, applied string }{
+		{"/books?select=id", "0-1/5", "count=estimated"},         // more than 2: the estimate
+		{"/books?select=id&id=gt.1", "0-1/4", "count=exact"},     // more than 2 but filtered: exact
+		{"/books?select=id&id=gt.3", "0-1/2", "count=estimated"}, // within 2: exact count
+	} {
+		r := do(t, small, "GET", c.path, "", "Prefer", "count=estimated")
+		if r.header.Get("Content-Range") != c.cr || !strings.Contains(r.header.Get("Preference-Applied"), c.applied) {
+			t.Errorf("max-rows 2 %s: %q %q", c.path, r.header.Get("Content-Range"), r.header.Get("Preference-Applied"))
 		}
 	}
 }

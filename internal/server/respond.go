@@ -57,6 +57,9 @@ func parsePrefer(values []string) prefer {
 			case "return":
 				p.ret = val
 			case "count":
+				if val != "exact" && val != "planned" && val != "estimated" {
+					continue
+				}
 				p.count = val
 			case "resolution":
 				p.resolution = val
@@ -76,6 +79,18 @@ func parsePrefer(values []string) prefer {
 		}
 	}
 	return p
+}
+
+// setApplied replaces the applied value of a preference, e.g. when
+// count=planned had to fall back to an exact count.
+func (p *prefer) setApplied(key, val string) {
+	for i, a := range p.applied {
+		if k, _, _ := strings.Cut(a, "="); k == key {
+			p.applied[i] = key + "=" + val
+			return
+		}
+	}
+	p.applied = append(p.applied, key+"="+val)
 }
 
 // negotiate picks the response media type from the Accept header.

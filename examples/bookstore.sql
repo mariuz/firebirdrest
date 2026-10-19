@@ -281,3 +281,16 @@ CREATE OR ALTER USER authenticator PASSWORD 'authenticator' USING PLUGIN Srp;
 GRANT web_anon TO USER authenticator;
 GRANT web_user TO USER authenticator;
 COMMIT;
+
+-- Compute index statistics now that the data is loaded. Prefer: count=planned
+-- estimates a table's rows from them (indexes created on empty tables have none).
+-- Run this again after large changes.
+SET TERM ^ ;
+EXECUTE BLOCK AS
+  DECLARE name VARCHAR(63);
+BEGIN
+  FOR SELECT TRIM(RDB$INDEX_NAME) FROM RDB$INDICES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 INTO :name DO
+    EXECUTE STATEMENT 'SET STATISTICS INDEX "' || name || '"';
+END^
+SET TERM ; ^
+COMMIT;

@@ -135,6 +135,45 @@ The status is `206 Partial Content` when the page doesn't contain every matching
 otherwise. Counting runs an extra `SELECT COUNT(*)`, which reads every matching row; only ask for
 it when you need it.
 
+### Estimated counts
+
+On large tables an exact count is slow, because Firebird has to visit every row. Two cheaper
+modes return an estimate instead:
+
+| `Prefer` | Total in `Content-Range` |
+|---|---|
+| `count=exact` | the exact number of matching rows |
+| `count=planned` | the table's row count estimated from its index statistics, without reading the table |
+| `count=estimated` | exact up to `db-max-rows` (or 1000 when it is not set), the `planned` estimate above that |
+
+The estimate comes from the statistics of the table's primary key or another unique index: their
+selectivity is 1 / number of rows. Firebird computes index statistics when an index is created and
+when you run `SET STATISTICS INDEX`, so the estimate is as old as that. Recompute them after large
+loads or deletes, for example in a nightly job. This recomputes every index of the database (in
+`isql`, wrap it in `SET TERM`):
+
+```sql
+EXECUTE BLOCK AS
+  DECLARE name VARCHAR(63);
+BEGIN
+  FOR SELECT TRIM(RDB$INDEX_NAME) FROM RDB$INDICES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 INTO :name DO
+    EXECUTE STATEMENT 'SET STATISTICS INDEX "' || name || '"';
+END
+```
+
+An estimate only describes a whole table. When it doesn't apply, the total is exact and
+`Preference-Applied` says `count=exact`:
+
+- the request has filters (an estimate of a filtered count would need the optimizer's guesses,
+  which Firebird does not expose);
+- the resource is a view or a procedure;
+- the table has no unique index, or its unique indexes have no statistics yet (an index created on
+  an empty table has none until the next `SET STATISTICS`);
+- with `count=estimated`, the estimate is below the rows already counted.
+
+The total is never smaller than the rows in the response: when an old estimate is behind, the
+rows actually returned win.
+
 ## HEAD
 
 `HEAD` runs the same query and returns only the headers, so `HEAD` with `Prefer: count=exact`

@@ -25,7 +25,7 @@ jwt-secret = "a long random string of at least 32 characters"
 | `db-uri` | `FBREST_DB_URI` | (required) | `user:password@host[:port]/path/to/db.fdb[?options]` |
 | `db-anon-role` | `FBREST_DB_ANON_ROLE` | none | role for requests without a JWT; empty means a token is required |
 | `db-pool` | `FBREST_DB_POOL` | `10` | connections per role |
-| `db-max-rows` | `FBREST_DB_MAX_ROWS` | `0` | maximum rows per read (`0` = no limit) |
+| `db-max-rows` | `FBREST_DB_MAX_ROWS` | `0` | maximum rows per read (`0` = no limit); also where `Prefer: count=estimated` switches to the estimate (1000 when `0`) |
 | `db-pre-request` | `FBREST_DB_PRE_REQUEST` | none | executable procedure run at the start of each request |
 | `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters or `limit` |
 | `db-aggregates-enabled` | `FBREST_DB_AGGREGATES_ENABLED` | `true` | allow `count()`, `sum()`, … |

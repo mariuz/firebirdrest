@@ -9,7 +9,7 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 - Filters `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `in`, `is`, `isdistinct`,
   `not.`, and `or`/`and` trees.
 - `order` (including `order=embed(column)` on to-one embeds), `limit`, `offset`, `Range`,
-  `Prefer: count=exact`.
+  `Prefer: count=exact`, `count=planned` and `count=estimated`.
 - `POST`/`PATCH`/`PUT`/`DELETE` (`PATCH`/`DELETE` with `order` and `limit`), `Prefer: return=…`,
   `resolution=…`, `missing=default`,
   `tx=rollback`, `on_conflict`, `columns`.
@@ -36,10 +36,10 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 | Request context cost | always set | only when the database reads it (`db-request-context`) |
 | `params=single-object` | the body goes to a single `json` parameter | the body goes to a single text parameter, as JSON text |
 | `params=multiple-objects` on set-returning routines | no limit | at most 200 objects per request |
+| `count=planned` | the planner's estimate of the query | the table's row count from index statistics; exact for filtered requests, views and procedures |
 
 ## Not implemented yet
 
-- `Prefer: count=planned/estimated` (treated as `exact`).
 - `Accept: application/geo+json`, custom media type handlers.
 
 Open an issue if you need one of these.

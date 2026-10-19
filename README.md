@@ -141,6 +141,7 @@ table `BOOKS` is `/books` and column `AUTHOR_ID` is `author_id`. Quoted identifi
 | `GET /books?select=title,authors(name)&order=authors(name)` | ordering by a to-one embed |
 | `GET /books?limit=10&offset=20` | paging (also `Range: 20-29` header) |
 | `GET /books?select=id` + `Prefer: count=exact` | total in `Content-Range: 0-4/5` |
+| `GET /books?select=id` + `Prefer: count=planned` | the estimated total from index statistics (no table scan) |
 
 Casts: `text`, `varchar`, `integer`, `smallint`, `bigint`, `int128`, `numeric`, `double`, `decfloat`, `boolean`, `date`, `time`, `timestamp`.
 
@@ -380,7 +381,7 @@ Settings come from an optional config file (`firebirdrest app.conf`; see
 | `db-uri` | `FBREST_DB_URI` | (required) | `user:password@host:port/path/db.fdb[?wire_crypt=false&charset=UTF8…]` |
 | `db-anon-role` | `FBREST_DB_ANON_ROLE` | none | role for requests without a JWT. Empty means a token is required |
 | `db-pool` | `FBREST_DB_POOL` | `10` | connections per role |
-| `db-max-rows` | `FBREST_DB_MAX_ROWS` | `0` | cap on rows per read (0 = no cap) |
+| `db-max-rows` | `FBREST_DB_MAX_ROWS` | `0` | cap on rows per read (0 = no cap); threshold of `Prefer: count=estimated` (1000 when 0) |
 | `db-pre-request` | `FBREST_DB_PRE_REQUEST` | none | executable procedure run before each request |
 | `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters or `limit` |
 | `db-aggregates-enabled` | `FBREST_DB_AGGREGATES_ENABLED` | `true` | allow `count()`, `sum()`, … in `select` |

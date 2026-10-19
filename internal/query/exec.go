@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -125,6 +126,12 @@ func Read(ctx context.Context, q Querier, n *ReadNode, kf *KeyFilter) ([]*Obj, e
 // Count returns the number of rows matching the root conditions.
 // With aggregates it counts the groups.
 func Count(ctx context.Context, q Querier, n *ReadNode) (int64, error) {
+	return CountUpTo(ctx, q, n, 0)
+}
+
+// CountUpTo counts the rows like Count, but stops after limit+1 rows when
+// limit > 0: a result above limit means "more than limit".
+func CountUpTo(ctx context.Context, q Querier, n *ReadNode, limit int) (int64, error) {
 	var group []string
 	if n.HasAggregates() {
 		for _, f := range n.Fields {
@@ -137,30 +144,33 @@ func Count(ctx context.Context, q Querier, n *ReadNode) (int64, error) {
 		}
 	}
 	b := &Builder{}
-	if group != nil {
+	switch {
+	case group != nil:
 		named := make([]string, len(group))
 		for i, g := range group {
 			named[i] = fmt.Sprintf("%s AS c%d", g, i)
 		}
 		b.W("SELECT COUNT(*) FROM (SELECT ", strings.Join(named, ", "), " FROM ")
-	} else {
+	case limit > 0:
+		b.W("SELECT COUNT(*) FROM (SELECT 1 AS c0 FROM ")
+	default:
 		b.W("SELECT COUNT(*) FROM ")
 	}
 	b.WriteFrom(n, "t0")
-	b.W(" WHERE ")
-	ok, err := b.WriteWhere(n, "t0", nil)
-	if err != nil {
+	if err := b.WriteWhereClause(n, "t0"); err != nil {
 		return 0, err
 	}
-	sqlText := b.String()
-	if !ok {
-		sqlText = strings.TrimSuffix(sqlText, " WHERE ")
-	}
 	if group != nil {
-		sqlText += " GROUP BY " + strings.Join(group, ", ") + ") g"
+		b.W(" GROUP BY ", strings.Join(group, ", "))
+	}
+	if limit > 0 {
+		b.W(" ROWS ", strconv.Itoa(limit+1))
+	}
+	if group != nil || limit > 0 {
+		b.W(") g")
 	}
 	var c int64
-	rows, err := q.QueryContext(ctx, sqlText, b.Args...)
+	rows, err := q.QueryContext(ctx, b.String(), b.Args...)
 	if err != nil {
 		return 0, err
 	}
@@ -171,6 +181,38 @@ func Count(ctx context.Context, q Querier, n *ReadNode) (int64, error) {
 		}
 	}
 	return c, rows.Err()
+}
+
+// EstimateRows returns the number of rows of table rel according to
+// Firebird's index statistics, without reading the table: the selectivity
+// of a unique index (RDB$INDICES.RDB$STATISTICS) is 1 / row count as of the
+// last time the statistics were computed (index creation or
+// SET STATISTICS INDEX). ok is false for views and procedure results, and
+// for tables whose unique indexes have no statistics yet.
+func EstimateRows(ctx context.Context, q Querier, rel *schema.Relation) (est int64, ok bool, err error) {
+	if rel.IsView {
+		return 0, false, nil
+	}
+	rows, err := q.QueryContext(ctx, `SELECT MIN(i.RDB$STATISTICS) FROM RDB$INDICES i
+WHERE i.RDB$RELATION_NAME = ? AND i.RDB$UNIQUE_FLAG = 1
+  AND COALESCE(i.RDB$INDEX_INACTIVE, 0) = 0 AND i.RDB$STATISTICS > 0`, rel.DBName)
+	if err != nil {
+		return 0, false, err
+	}
+	defer rows.Close()
+	var sel sql.NullFloat64
+	if rows.Next() {
+		if err := rows.Scan(&sel); err != nil {
+			return 0, false, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, false, err
+	}
+	if !sel.Valid || sel.Float64 <= 0 {
+		return 0, false, nil
+	}
+	return int64(math.Round(1 / sel.Float64)), true, nil
 }
 
 // Keys returns the given columns of rows matching the root conditions.

@@ -40,6 +40,44 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Homebrew (macOS) and Scoop (Windows) packages, published to their own repositories
+# with TAP_GITHUB_TOKEN; skipped when the token is not set.
+homebrew_casks:
+  - name: firebirdrest
+    binaries: [firebirdrest]
+    homepage: https://mariuz.github.io/firebirdrest/
+    description: Serve a RESTful API from any Firebird database
+    license: MIT
+    repository:
+      owner: mariuz
+      name: homebrew-tap
+      token: '{{ envOrDefault "TAP_GITHUB_TOKEN" "" }}'
+    skip_upload: '{{ if eq (envOrDefault "TAP_GITHUB_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    hooks:
+      post:
+        # the binaries are not notarized: let macOS run them
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/firebirdrest"]
+          end
+
+scoops:
+  - name: firebirdrest
+    homepage: https://mariuz.github.io/firebirdrest/
+    description: Serve a RESTful API from any Firebird database
+    license: MIT
+    repository:
+      owner: mariuz
+      name: scoop-bucket
+      token: '{{ envOrDefault "TAP_GITHUB_TOKEN" "" }}'
+    skip_upload: '{{ if eq (envOrDefault "TAP_GITHUB_TOKEN" "") "" }}true{{ else }}false{{ end }}'
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 

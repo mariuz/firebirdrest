@@ -13,6 +13,8 @@ All notable changes to FirebirdREST are listed here. The project follows
 - Query plans: with `db-plan-enabled = true`, `Accept: application/vnd.pgrst.plan` (`+text` or
   `+json`) returns Firebird's explained plan of every statement a `GET`/`HEAD` request runs,
   including embeds and counts, instead of the data.
+- The release workflow can also publish the Docker image to Docker Hub, a Homebrew cask and a
+  Scoop manifest, each once its secret is configured (see `RELEASING.md`).
 
 ## [0.1.1] - 2026-10-19
 

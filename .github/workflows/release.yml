@@ -4,6 +4,7 @@ name: Release
 #  - push a tag:       git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0
 #  - from GitHub:      Actions -> Release -> Run workflow, enter the version (e.g. 0.2.0).
 #                      The tag is created on the selected branch after the tests pass.
+# See RELEASING.md for the steps and the optional Docker Hub / Homebrew / Scoop settings.
 # Before releasing, move the [Unreleased] entries of CHANGELOG.md under "## [x.y.z] - date":
 # that section becomes the release notes (replacing any text already on the GitHub release).
 on:
@@ -89,6 +90,9 @@ jobs:
           args: ${{ env.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # write access to mariuz/homebrew-tap and mariuz/scoop-bucket; without
+          # it the Homebrew cask and Scoop manifest are not published
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
 
   docker:
     needs: tag
@@ -104,10 +108,19 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Docker Hub too, once the repository variable DOCKERHUB_USERNAME and the
+      # secret DOCKERHUB_TOKEN (an access token with write access) are set
+      - if: ${{ vars.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: |
+            ghcr.io/${{ github.repository }}
+            ${{ vars.DOCKERHUB_USERNAME != '' && format('docker.io/{0}/firebirdrest', vars.DOCKERHUB_USERNAME) || '' }}
           tags: |
             type=semver,pattern={{version}},value=${{ needs.tag.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ needs.tag.outputs.tag }}

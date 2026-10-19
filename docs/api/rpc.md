@@ -26,6 +26,53 @@ names in a `POST` body are rejected.
 
 `GET` runs in a **read-only transaction**. Use `POST` for routines that change data.
 
+## Calling a routine many times
+
+With `Prefer: params=multiple-objects`, a `POST` body that is an array of argument objects calls
+the routine once per object, in one transaction:
+
+```sh
+curl -X POST 'localhost:3000/rpc/add_vat' -H 'Prefer: params=multiple-objects' \
+     -H 'Content-Type: application/json' -d '[{"amount":100},{"amount":100,"rate":10}]'
+# [119.00,110.00]
+```
+
+| Routine | Response |
+|---|---|
+| Selectable procedure | the rows of every call together, as one result |
+| Executable procedure | an array with the output parameters of each call, or `204` if it has none |
+| PSQL function | an array with the value of each call |
+
+- For a selectable procedure the calls are combined into one query (`UNION ALL`), so `select`,
+  filters, `order`, `limit` and `Prefer: count` apply to the combined rows:
+  `POST /rpc/books_by_country?order=price&limit=5` with `[{"country":"UK"},{"country":"USA"}]`
+  returns the 5 cheapest books of both countries. Firebird allows 256 procedures per statement,
+  so this takes at most 200 objects (`FBRST128`); split larger arrays.
+- The calls run in the request's transaction: if one fails, none of them is saved.
+- A single object instead of an array is one call, and the response is still an array.
+
+## Passing the whole body
+
+With `Prefer: params=single-object`, the raw JSON body is passed to a routine that has exactly one
+text parameter (`VARCHAR`/`CHAR` or `BLOB SUB_TYPE TEXT`). Firebird has no JSON type, so the
+routine receives the JSON document as text, for example to store it:
+
+```sql
+CREATE PROCEDURE log_request (payload BLOB SUB_TYPE TEXT) RETURNS (id INTEGER) AS
+BEGIN
+  INSERT INTO api_log (payload) VALUES (:payload) RETURNING id INTO :id;
+END
+```
+
+```sh
+curl -X POST 'localhost:3000/rpc/log_request' -H 'Prefer: params=single-object' \
+     -H 'Content-Type: application/json' -d '{"event":"signup","tags":["a","b"]}'
+# {"id":1}
+```
+
+The body must be valid JSON, and fit the parameter when it is a `VARCHAR`. A routine with another
+signature is refused with `FBRST129`.
+
 ## Shaping selectable procedures
 
 The output of a selectable procedure can be selected, filtered, ordered, paged and counted like

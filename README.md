@@ -309,6 +309,8 @@ curl -X PATCH  'localhost:3000/books?in_stock=is.true&order=price&limit=10' -d '
 | `resolution=merge-duplicates` / `ignore-duplicates` | upsert behaviour of `POST` |
 | `missing=default` | with `?columns=`, keys missing from a row use the column default instead of NULL |
 | `tx=rollback` | run everything, then roll back (handy for tests) |
+| `params=multiple-objects` | `/rpc`: call the routine once per object of an array body |
+| `params=single-object` | `/rpc`: pass the whole JSON body to the routine's only text parameter |
 
 `?columns=a,b` limits which keys of the body are inserted. Bodies are JSON; form-urlencoded is
 also accepted for a single row. Binary BLOBs are read and written as base64.

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -419,5 +420,88 @@ func TestStatementCacheUnderLoad(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("%d statements still cached after the idle timeout", n)
+	}
+}
+
+func TestRPCParams(t *testing.T) {
+	ts := testServer(t)
+	user := "Bearer " + token(t, jwt.MapClaims{"role": "web_user"})
+	multi := "params=multiple-objects"
+
+	// selectable procedure: one query over every call, shaped as a whole
+	r := do(t, ts, "POST", "/rpc/books_by_country?select=title&order=title", `[{"country":"UK"},{"country":"Poland"}]`,
+		"Prefer", multi)
+	if r.status != 200 {
+		t.Fatalf("multiple-objects selectable: %d %s", r.status, r.body)
+	}
+	jsonEq(t, r.body, `[{"title":"Guards! Guards!"},{"title":"Small Gods"},{"title":"Solaris"}]`)
+	if pa := r.header.Get("Preference-Applied"); !strings.Contains(pa, multi) {
+		t.Errorf("Preference-Applied %q", pa)
+	}
+	r = do(t, ts, "POST", "/rpc/books_by_country?select=title&limit=1", `[{"country":"UK"},{"country":"Poland"}]`,
+		"Prefer", multi, "Prefer", "count=exact")
+	if cr := r.header.Get("Content-Range"); cr != "0-0/3" {
+		t.Errorf("combined count: Content-Range %q", cr)
+	}
+	r = do(t, ts, "POST", "/rpc/books_by_country?select=title&price=lt.10&order=price.desc&limit=1",
+		`[{"country":"UK"},{"country":"Poland"},{"country":"USA"}]`, "Prefer", multi)
+	jsonEq(t, r.body, `[{"title":"Guards! Guards!"}]`)
+	r = do(t, ts, "POST", "/rpc/books_by_country", `[]`, "Prefer", multi, "Prefer", "count=exact")
+	jsonEq(t, r.body, `[]`)
+	if cr := r.header.Get("Content-Range"); cr != "*/0" {
+		t.Errorf("empty Content-Range %q", cr)
+	}
+
+	// function: an array of results; a single object is one call
+	r = do(t, ts, "POST", "/rpc/add_vat", `[{"amount":100},{"amount":100,"rate":10},{"amount":"50"}]`, "Prefer", multi)
+	jsonEq(t, r.body, `[119.00,110.00,59.50]`)
+	r = do(t, ts, "POST", "/rpc/add_vat", `{"amount":100}`, "Prefer", multi)
+	jsonEq(t, r.body, `[119.00]`)
+
+	// executable procedure: every call in the same transaction, all or nothing
+	r = do(t, ts, "POST", "/rpc/place_order", `[{"customer_id":1,"book_id":1},{"customer_id":2,"book_id":2,"qty":3}]`,
+		"Authorization", user, "Prefer", multi, "Prefer", "tx=rollback")
+	var orders []map[string]int
+	if err := json.Unmarshal([]byte(r.body), &orders); err != nil || r.status != 200 || len(orders) != 2 ||
+		orders[1]["order_id"] != orders[0]["order_id"]+1 {
+		t.Errorf("multiple-objects executable: %d %s", r.status, r.body)
+	}
+	r = do(t, ts, "POST", "/rpc/place_order", `[{"customer_id":1,"book_id":1},{"customer_id":1,"book_id":5}]`,
+		"Authorization", user, "Prefer", multi)
+	if r.status != 400 || !strings.Contains(r.body, "out of stock") {
+		t.Errorf("failing call: %d %s", r.status, r.body)
+	}
+	if r = do(t, ts, "GET", "/orders?select=id&customer_id=eq.1&order=id", "", "Authorization", user); r.body != `[{"id":1}]` {
+		t.Errorf("the batch with a failing call was not rolled back: %s", r.body)
+	}
+
+	// single-object: the whole body reaches the only (text) parameter
+	doc := `{"event":"signup","tags":["a","b"],"n":1.5}`
+	r = do(t, ts, "POST", "/rpc/log_request", doc, "Authorization", user, "Prefer", "params=single-object")
+	var logged struct{ ID int }
+	if err := json.Unmarshal([]byte(r.body), &logged); err != nil || r.status != 200 || logged.ID == 0 {
+		t.Fatalf("single-object: %d %s", r.status, r.body)
+	}
+	r = do(t, ts, "GET", fmt.Sprintf("/api_log?select=payload&id=eq.%d", logged.ID), "", "Authorization", user)
+	jsonEq(t, r.body, `[{"payload":`+strconv.Quote(doc)+`}]`)
+	do(t, ts, "DELETE", fmt.Sprintf("/api_log?id=eq.%d", logged.ID), "", "Authorization", user) // committed above; clean up
+
+	// errors
+	many := strings.Repeat(`{"country":"UK"},`, 200) + `{"country":"UK"}`
+	for _, c := range []struct{ path, body, prefer, code string }{
+		{"/rpc/books_by_country", "[" + many + "]", multi, "FBRST128"},         // over the UNION limit
+		{"/rpc/add_vat", `[{"amount":1},{"nope":1}]`, multi, "FBRST202"},       // unknown argument
+		{"/rpc/add_vat", `[{"amount":1}]`, "", "FBRST102"},                     // array without the preference
+		{"/rpc/add_vat", `{"amount":1}`, "params=single-object", "FBRST129"},   // two parameters
+		{"/rpc/log_request", `{"broken":`, "params=single-object", "FBRST102"}, // invalid JSON
+	} {
+		h := []string{"Authorization", user}
+		if c.prefer != "" {
+			h = append(h, "Prefer", c.prefer)
+		}
+		r := do(t, ts, "POST", c.path, c.body, h...)
+		if r.status/100 != 4 || !strings.Contains(r.body, `"code":"`+c.code+`"`) {
+			t.Errorf("%s %s: %d %s", c.prefer, c.path, r.status, r.body)
+		}
 	}
 }

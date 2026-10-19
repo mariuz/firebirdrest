@@ -83,6 +83,8 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST125` | invalid path |
 | `FBRST126` | `order=embed(column)` on a to-many embed, or together with aggregates |
 | `FBRST127` | `PATCH`/`DELETE` with `limit` but no `order`, or `offset` without `limit` |
+| `FBRST128` | more than 200 objects for a selectable procedure with `params=multiple-objects` |
+| `FBRST129` | `params=single-object` on a routine without exactly one text parameter |
 | `FBRST200` | no relationship between the tables |
 | `FBRST201` | several relationships, `!hint` needed |
 | `FBRST202` | unknown procedure or function, or unknown argument |

@@ -123,6 +123,8 @@ a filter. Set `db-safe-updates = false` to allow unrestricted writes.
 | `resolution=merge-duplicates` / `ignore-duplicates` | upsert behaviour of `POST` |
 | `missing=default` | with `?columns=`, missing keys use column defaults |
 | `tx=rollback` | run the request, then roll back: nothing is saved |
+| `params=multiple-objects` | `/rpc`: call the routine once per object of an array body ([details](rpc.md#calling-a-routine-many-times)) |
+| `params=single-object` | `/rpc`: pass the whole JSON body to the routine's only text parameter ([details](rpc.md#passing-the-whole-body)) |
 
 Applied preferences are echoed in `Preference-Applied`. Combine them with commas or several
 `Prefer` headers.

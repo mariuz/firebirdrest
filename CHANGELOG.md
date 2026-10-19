@@ -12,6 +12,12 @@ All notable changes to FirebirdREST are listed here. The project follows
 - `PATCH` and `DELETE` with `limit` and `offset`, as in PostgREST: `?order=created_at&limit=10`
   changes only the first 10 matching rows. A limit needs an `order` (`FBRST127`), and the primary
   key is added to it as a tie-breaker. `db-safe-updates` accepts a limit instead of a filter.
+- `Prefer: params=multiple-objects` on `/rpc`: an array body calls the routine once per object in
+  one transaction. Selectable procedures return the combined rows as one result (one `UNION ALL`
+  query, so `select`, filters, `order` and `limit` apply to all of them; at most 200 objects),
+  executable procedures and functions an array of results.
+- `Prefer: params=single-object` on `/rpc`: the raw JSON body is passed to a routine's only text
+  parameter. The example database has `log_request` for this.
 - CI runs the integration suite against the Firebird 6 snapshot (`firebirdsql/firebird:6-snapshot`)
   on every push and weekly. The job may fail without failing the build until Firebird 6 is released.
 

@@ -44,6 +44,7 @@ type prefer struct {
 	resolution string // merge-duplicates, ignore-duplicates
 	tx         string // commit, rollback
 	missing    string // default, null
+	params     string // single-object, multiple-objects (RPC)
 	applied    []string
 }
 
@@ -63,6 +64,11 @@ func parsePrefer(values []string) prefer {
 				p.tx = val
 			case "missing":
 				p.missing = val
+			case "params":
+				if val != "single-object" && val != "multiple-objects" {
+					continue
+				}
+				p.params = val
 			default:
 				continue
 			}

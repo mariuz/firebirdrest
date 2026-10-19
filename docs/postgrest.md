@@ -13,7 +13,8 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 - `POST`/`PATCH`/`PUT`/`DELETE` (`PATCH`/`DELETE` with `order` and `limit`), `Prefer: return=…`,
   `resolution=…`, `missing=default`,
   `tx=rollback`, `on_conflict`, `columns`.
-- `/rpc/<name>` with `GET` (read-only) and `POST`.
+- `/rpc/<name>` with `GET` (read-only) and `POST`, `Prefer: params=multiple-objects` and
+  `params=single-object`.
 - JWT role switching, an anonymous role, a pre-request hook, and claims available to SQL.
 - `application/vnd.pgrst.object+json`, CSV, OpenAPI at `/`, `{code, message, details, hint}` errors.
 
@@ -33,12 +34,12 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 | Schema reload | `NOTIFY pgrst` | `POST_EVENT 'fbrest_reload'` |
 | Unfiltered `PATCH`/`DELETE` | allowed (unless pg-safeupdate) | refused unless `db-safe-updates = false` |
 | Request context cost | always set | only when the database reads it (`db-request-context`) |
+| `params=single-object` | the body goes to a single `json` parameter | the body goes to a single text parameter, as JSON text |
+| `params=multiple-objects` on set-returning routines | no limit | at most 200 objects per request |
 
 ## Not implemented yet
 
 - `Prefer: count=planned/estimated` (treated as `exact`).
 - `Accept: application/geo+json`, custom media type handlers.
-- RPC calls with an array body (`Prefer: params=multiple-objects`) or a single unnamed argument
-  (`params=single-object`).
 
 Open an issue if you need one of these.

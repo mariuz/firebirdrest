@@ -367,9 +367,7 @@ func (s *Server) representation(rc *reqCtx, rel *schema.Relation, p *query.Param
 		}
 	}
 	for path, o := range p.Order {
-		if path != "" {
-			readParams.Order[path] = o
-		}
+		readParams.Order[path] = o // the root order keeps a limited PATCH's rows in order
 	}
 	n, err := query.BuildRead(rc.sc, rel, readParams, 0)
 	if err != nil {
@@ -417,20 +415,23 @@ func (s *Server) update(rc *reqCtx, rel *schema.Relation) error {
 	if err != nil {
 		return err
 	}
-	if s.cfg.DBSafeUpdates && len(n.Where) == 0 {
+	if err := query.PrepareLimitedWrite(n); err != nil {
+		return err
+	}
+	if s.cfg.DBSafeUpdates && len(n.Where) == 0 && n.Limit < 0 {
 		return &query.Error{Status: 400, Code: "FBRST109",
-			Message: "PATCH without filters is not allowed", Hint: "add a filter such as ?id=eq.1, or set db-safe-updates = false"}
+			Message: "PATCH without filters is not allowed", Hint: "add a filter such as ?id=eq.1 or a limit, or set db-safe-updates = false"}
 	}
 	ctx := rc.r.Context()
 	wantRep := rc.prefer.ret == "representation"
 	var keys [][]any
-	if wantRep && len(rel.PrimaryKey) > 0 {
+	if wantRep && len(rel.PrimaryKey) > 0 && n.Limit != 0 {
 		if keys, err = query.Keys(ctx, rc.tx, n, rel.PrimaryKey); err != nil {
 			return err
 		}
 	}
 	affected := 0
-	if len(cols) > 0 {
+	if len(cols) > 0 && n.Limit != 0 {
 		b := &query.Builder{}
 		b.W("UPDATE ", schema.Quote(rel.DBName), " t0 SET ")
 		for i, c := range cols {
@@ -440,16 +441,10 @@ func (s *Server) update(rc *reqCtx, rel *schema.Relation) error {
 			b.W(schema.Quote(c.DBName), " = ")
 			b.Arg(vals[i])
 		}
-		b.W(" WHERE ")
-		ok, err := b.WriteWhere(n, "t0", nil)
-		if err != nil {
+		if err := writeLimitedTail(b, n); err != nil {
 			return err
 		}
-		sqlText := b.String()
-		if !ok {
-			sqlText = strings.TrimSuffix(sqlText, " WHERE ")
-		}
-		res, err := rc.tx.ExecContext(ctx, sqlText, b.Args...)
+		res, err := rc.tx.ExecContext(ctx, b.String(), b.Args...)
 		if err != nil {
 			return err
 		}
@@ -565,33 +560,34 @@ func (s *Server) delete(rc *reqCtx, rel *schema.Relation) error {
 	if err != nil {
 		return err
 	}
-	if s.cfg.DBSafeUpdates && len(n.Where) == 0 {
+	if err := query.PrepareLimitedWrite(n); err != nil {
+		return err
+	}
+	if s.cfg.DBSafeUpdates && len(n.Where) == 0 && n.Limit < 0 {
 		return &query.Error{Status: 400, Code: "FBRST109",
-			Message: "DELETE without filters is not allowed", Hint: "add a filter such as ?id=eq.1, or set db-safe-updates = false"}
+			Message: "DELETE without filters is not allowed", Hint: "add a filter such as ?id=eq.1 or a limit, or set db-safe-updates = false"}
 	}
 	ctx := rc.r.Context()
 	var out []*query.Obj
 	if rc.prefer.ret == "representation" {
-		n.Limit, n.Offset = -1, 0
+		// the same rows the DELETE removes: same filters, order, offset and limit
 		if out, err = query.Read(ctx, rc.tx, n, nil); err != nil {
 			return err
 		}
 	}
-	b := &query.Builder{}
-	b.W("DELETE FROM ", schema.Quote(rel.DBName), " t0 WHERE ")
-	ok, err := b.WriteWhere(n, "t0", nil)
-	if err != nil {
-		return err
+	var affected int64
+	if n.Limit != 0 {
+		b := &query.Builder{}
+		b.W("DELETE FROM ", schema.Quote(rel.DBName), " t0")
+		if err := writeLimitedTail(b, n); err != nil {
+			return err
+		}
+		res, err := rc.tx.ExecContext(ctx, b.String(), b.Args...)
+		if err != nil {
+			return err
+		}
+		affected, _ = res.RowsAffected()
 	}
-	sqlText := b.String()
-	if !ok {
-		sqlText = strings.TrimSuffix(sqlText, " WHERE ")
-	}
-	res, err := rc.tx.ExecContext(ctx, sqlText, b.Args...)
-	if err != nil {
-		return err
-	}
-	affected, _ := res.RowsAffected()
 	if rc.prefer.count != "" {
 		rc.w.Header().Set("Content-Range", contentRange(0, int(affected), affected))
 	}
@@ -600,4 +596,19 @@ func (s *Server) delete(rc *reqCtx, rel *schema.Relation) error {
 		return nil
 	}
 	return writeRows(rc, http.StatusOK, out)
+}
+
+// writeLimitedTail writes the WHERE, ORDER BY and ROWS clauses of an UPDATE
+// or DELETE on alias t0.
+func writeLimitedTail(b *query.Builder, n *query.ReadNode) error {
+	if err := b.WriteWhereClause(n, "t0"); err != nil {
+		return err
+	}
+	if n.Limit >= 0 {
+		if err := b.WriteOrder(n, "t0"); err != nil {
+			return err
+		}
+		b.WriteRows(n)
+	}
+	return nil
 }

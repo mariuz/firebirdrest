@@ -72,7 +72,7 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST105` | `PUT` needs `eq` filters on the whole primary key |
 | `FBRST107` | no acceptable media type |
 | `FBRST108` | a filter or order references an embed that isn't in `select` |
-| `FBRST109` | `PATCH`/`DELETE` without filters (`db-safe-updates`) |
+| `FBRST109` | `PATCH`/`DELETE` without filters or `limit` (`db-safe-updates`) |
 | `FBRST114`, `FBRST115` | `PUT` body doesn't match the URL |
 | `FBRST116` | single object requested, row count isn't 1 |
 | `FBRST117` | method not allowed |
@@ -82,6 +82,7 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST124` | upsert without primary key or `on_conflict` |
 | `FBRST125` | invalid path |
 | `FBRST126` | `order=embed(column)` on a to-many embed, or together with aggregates |
+| `FBRST127` | `PATCH`/`DELETE` with `limit` but no `order`, or `offset` without `limit` |
 | `FBRST200` | no relationship between the tables |
 | `FBRST201` | several relationships, `!hint` needed |
 | `FBRST202` | unknown procedure or function, or unknown argument |

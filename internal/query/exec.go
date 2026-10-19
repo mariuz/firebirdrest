@@ -190,11 +190,17 @@ func Keys(ctx context.Context, q Querier, n *ReadNode, cols []string) ([][]any, 
 	if err != nil {
 		return nil, err
 	}
-	sqlText := b.String()
 	if !ok {
-		sqlText = strings.TrimSuffix(sqlText, " WHERE ")
+		sqlText := strings.TrimSuffix(b.String(), " WHERE ")
+		b.sb.Reset()
+		b.sb.WriteString(sqlText)
 	}
-	rows, err := q.QueryContext(ctx, sqlText, b.Args...)
+	// a limited PATCH selects the same rows it then updates
+	if err := b.WriteOrder(n, "t0"); err != nil {
+		return nil, err
+	}
+	b.WritePaging(n.Offset, n.Limit)
+	rows, err := q.QueryContext(ctx, b.String(), b.Args...)
 	if err != nil {
 		return nil, err
 	}

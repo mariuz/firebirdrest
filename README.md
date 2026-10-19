@@ -297,6 +297,9 @@ curl -X POST 'localhost:3000/tags?on_conflict=name' \
 curl -X PATCH  'localhost:3000/books?id=eq.1' -d '{"price":11.50}'
 curl -X PUT    'localhost:3000/tags?id=eq.7'  -d '{"id":7,"name":"noir"}'
 curl -X DELETE 'localhost:3000/tags?id=eq.7'  -H 'Prefer: return=representation'
+
+# limited: only the 10 cheapest matching rows (limit needs an order)
+curl -X PATCH  'localhost:3000/books?in_stock=is.true&order=price&limit=10' -d '{"price":5}'
 ```
 
 | `Prefer` | Effect |
@@ -377,7 +380,7 @@ Settings come from an optional config file (`firebirdrest app.conf`; see
 | `db-pool` | `FBREST_DB_POOL` | `10` | connections per role |
 | `db-max-rows` | `FBREST_DB_MAX_ROWS` | `0` | cap on rows per read (0 = no cap) |
 | `db-pre-request` | `FBREST_DB_PRE_REQUEST` | none | executable procedure run before each request |
-| `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters |
+| `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters or `limit` |
 | `db-aggregates-enabled` | `FBREST_DB_AGGREGATES_ENABLED` | `true` | allow `count()`, `sum()`, … in `select` |
 | `db-request-context` | `FBREST_DB_REQUEST_CONTEXT` | `auto` | set the `request.*` context variables: `auto` (only when some view, trigger or routine mentions `request.`), `always`, `never` |
 | `db-prepared-statements` | `FBREST_DB_PREPARED_STATEMENTS` | `256` | prepared statements cached per role (0 = off) |

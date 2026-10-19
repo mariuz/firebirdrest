@@ -85,10 +85,33 @@ curl -X PUT 'localhost:3000/tags?id=eq.10' -H 'Content-Type: application/json' -
 curl -X DELETE 'localhost:3000/tags?id=eq.10' -H 'Prefer: return=representation'
 ```
 
+## Limiting updates and deletes
+
+`limit` (and `offset`) on `PATCH` or `DELETE` change only that many of the matching rows. A
+limit needs an `order`, so it is clear which rows are picked:
+
+```sh
+# mark the 10 oldest pending orders as shipped
+curl -X PATCH 'localhost:3000/orders?status=eq.pending&order=created_at&limit=10' \
+     -H 'Content-Type: application/json' -d '{"status":"shipped"}'
+
+# delete the 100 oldest log rows, skipping the first 1000
+curl -X DELETE 'localhost:3000/audit_log?order=logged_at&offset=1000&limit=100'
+```
+
+- The order may only use the table's own columns, not an embed's.
+- When the table has a primary key, it is added to the end of the order as a tie-breaker, so
+  rows with equal order values are still picked the same way every time.
+- `Prefer: return=representation` returns exactly the changed rows, in that order.
+- A limit without an order, or an offset without a limit, is refused with `FBRST127`.
+
+Firebird runs these as `UPDATE … ORDER BY … ROWS m TO n` and `DELETE … ORDER BY … ROWS m TO n`.
+
 ## Safety
 
 `PATCH` and `DELETE` without any filter are refused with `400` so a missing parameter can't
-change a whole table. Set `db-safe-updates = false` to allow them.
+change a whole table. A `limit` counts as a restriction: `?order=id&limit=10` is allowed without
+a filter. Set `db-safe-updates = false` to allow unrestricted writes.
 
 ## Prefer reference
 

@@ -341,6 +341,74 @@ func (b *Builder) WritePaging(offset, limit int) {
 	}
 }
 
+// WriteWhereClause writes " WHERE <conditions>", or nothing when n has no
+// condition.
+func (b *Builder) WriteWhereClause(n *ReadNode, alias string) error {
+	w := &Builder{Args: b.Args, alias: b.alias}
+	ok, err := w.WriteWhere(n, alias, nil)
+	if err != nil || !ok {
+		return err
+	}
+	b.W(" WHERE ", w.String())
+	b.Args, b.alias = w.Args, w.alias
+	return nil
+}
+
+// PrepareLimitedWrite validates order/limit/offset of a PATCH or DELETE.
+// Without limit and offset the write affects every matching row and any order
+// is dropped. A limit needs an explicit order, as in PostgREST, so the
+// affected rows are well defined; the primary key is appended to it as a
+// tie-breaker so equal order values don't make the choice arbitrary.
+func PrepareLimitedWrite(n *ReadNode) error {
+	if n.Limit < 0 && n.Offset == 0 {
+		n.Order = nil
+		return nil
+	}
+	if n.Limit < 0 {
+		return &Error{Status: 400, Code: "FBRST127", Message: "offset on PATCH/DELETE needs a limit",
+			Hint: "add limit=, e.g. ?order=id&offset=10&limit=5"}
+	}
+	if len(n.Order) == 0 {
+		return &Error{Status: 400, Code: "FBRST127", Message: "limit on PATCH/DELETE needs an explicit order",
+			Hint: "add order=, e.g. ?order=id&limit=10, so it is clear which rows are changed"}
+	}
+	for _, o := range n.Order {
+		if o.child != nil {
+			return &Error{Status: 400, Code: "FBRST127", Message: "a limited PATCH/DELETE can only be ordered by its own columns"}
+		}
+	}
+	for _, pk := range n.Rel.PrimaryKey {
+		c := n.Rel.Column(pk)
+		if c == nil {
+			continue
+		}
+		dup := false
+		for _, o := range n.Order {
+			if f, ok := fieldFor(n.Rel, o.Field); ok && f.Fn == nil && f.Col == c {
+				dup = true
+			}
+		}
+		if !dup {
+			n.Order = append(n.Order, OrderTerm{Field: c.Name})
+		}
+	}
+	return nil
+}
+
+// WriteRows writes Firebird's ROWS clause for an UPDATE/DELETE limited by
+// n.Limit and n.Offset (rows are numbered from 1). Write nothing when the
+// write is not limited.
+func (b *Builder) WriteRows(n *ReadNode) {
+	if n.Limit < 0 {
+		return
+	}
+	if n.Offset > 0 {
+		b.W(" ROWS ", strconv.Itoa(n.Offset+1), " TO ", strconv.Itoa(n.Offset+n.Limit))
+		return
+	}
+	b.W(" ROWS ", strconv.Itoa(n.Limit))
+}
+
 // WriteKeyMatch writes a condition matching cols against a set of key tuples.
 func (b *Builder) WriteKeyMatch(alias string, cols []string, keys [][]any) {
 	if len(keys) == 0 {

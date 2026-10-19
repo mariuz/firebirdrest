@@ -292,6 +292,44 @@ func TestWrites(t *testing.T) {
 		t.Errorf("unfiltered patch: %d", r.status)
 	}
 
+	// limited PATCH/DELETE: order + limit/offset pick the rows (prices 9.99, 8.50, 12.00, 7.25, 10.40)
+	rep := "return=representation"
+	r = do(t, ts, "PATCH", "/books?order=price&limit=2&select=id,price", `{"price":1}`,
+		"Authorization", user, "Prefer", rep, "Prefer", rb, "Prefer", "count=exact")
+	jsonEq(t, r.body, `[{"id":4,"price":1.00},{"id":2,"price":1.00}]`)
+	if cr := r.header.Get("Content-Range"); cr != "0-1/2" {
+		t.Errorf("limited patch Content-Range %q", cr)
+	}
+	r = do(t, ts, "PATCH", "/books?order=price.desc&offset=1&limit=2&select=id", `{"in_stock":false}`,
+		"Authorization", user, "Prefer", rep, "Prefer", rb)
+	jsonEq(t, r.body, `[{"id":5},{"id":1}]`)
+	// ties are broken by the primary key
+	r = do(t, ts, "PATCH", "/books?author_id=in.(1,2)&order=author_id&limit=3&select=id", `{"in_stock":false}`,
+		"Authorization", user, "Prefer", rep, "Prefer", rb)
+	jsonEq(t, r.body, `[{"id":1},{"id":2},{"id":3}]`)
+	r = do(t, ts, "PATCH", "/books?order=id&limit=0&select=id", `{"price":1}`,
+		"Authorization", user, "Prefer", rep, "Prefer", rb)
+	jsonEq(t, r.body, `[]`)
+	r = do(t, ts, "DELETE", "/book_tags?order=book_id.desc,tag_id&limit=2&select=book_id,tag_id", "",
+		"Authorization", user, "Prefer", rep, "Prefer", rb, "Prefer", "count=exact")
+	jsonEq(t, r.body, `[{"book_id":5,"tag_id":2},{"book_id":4,"tag_id":1}]`)
+	if cr := r.header.Get("Content-Range"); cr != "0-1/2" {
+		t.Errorf("limited delete Content-Range %q", cr)
+	}
+	for path, code := range map[string]string{
+		"/books?limit=2":           "FBRST127", // limit without order
+		"/books?order=id&offset=2": "FBRST127", // offset without limit
+	} {
+		if r = do(t, ts, "PATCH", path, `{"price":1}`, "Authorization", user, "Prefer", rb); r.status != 400 ||
+			!strings.Contains(r.body, code) {
+			t.Errorf("PATCH %s: %d %s", path, r.status, r.body)
+		}
+		if r = do(t, ts, "DELETE", path, "", "Authorization", user, "Prefer", rb); r.status != 400 ||
+			!strings.Contains(r.body, code) {
+			t.Errorf("DELETE %s: %d %s", path, r.status, r.body)
+		}
+	}
+
 	r = do(t, ts, "PUT", "/tags?id=eq.99", `{"id":99,"name":"put"}`,
 		"Authorization", user, "Prefer", "return=representation", "Prefer", rb)
 	jsonEq(t, r.body, `[{"id":99,"name":"put"}]`)

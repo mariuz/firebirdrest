@@ -9,10 +9,15 @@ All notable changes to FirebirdREST are listed here. The project follows
 - Ordering by a column of a to-one embed, as in PostgREST: `order=authors(name).desc`. It works at
   any level (`books.order=authors(name)`), by alias and on spread embeds. To-many embeds are
   refused with `FBRST126`.
+- `PATCH` and `DELETE` with `limit` and `offset`, as in PostgREST: `?order=created_at&limit=10`
+  changes only the first 10 matching rows. A limit needs an `order` (`FBRST127`), and the primary
+  key is added to it as a tie-breaker. `db-safe-updates` accepts a limit instead of a filter.
 - CI runs the integration suite against the Firebird 6 snapshot (`firebirdsql/firebird:6-snapshot`)
   on every push and weekly. The job may fail without failing the build until Firebird 6 is released.
 
 ### Fixed
+- A `PATCH` with `?limit=` and `return=representation` updated every matching row but returned
+  only `limit` of them; the limit now applies to the update itself.
 - Schema loading reports errors that happen while reading the system tables, instead of
   silently loading an incomplete schema (on Firebird 6 this hid every foreign key).
 - Foreign keys and unique constraints load on Firebird 6.

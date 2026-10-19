@@ -276,3 +276,47 @@ func TestRelatedOrderErrors(t *testing.T) {
 		t.Errorf("to-many: got %v", err)
 	}
 }
+
+func TestPrepareLimitedWrite(t *testing.T) {
+	// not limited: order is dropped, nothing else changes
+	n := build(t, "books", "order=title")
+	if err := PrepareLimitedWrite(n); err != nil || n.Order != nil {
+		t.Errorf("unlimited: %v %+v", err, n.Order)
+	}
+
+	// limited: the primary key is appended as a tie-breaker, once
+	n = build(t, "books", "order=author_id.desc&limit=2")
+	if err := PrepareLimitedWrite(n); err != nil {
+		t.Fatal(err)
+	}
+	b := &Builder{}
+	if err := b.WriteOrder(n, "t0"); err != nil {
+		t.Fatal(err)
+	}
+	b.WriteRows(n)
+	if got := b.String(); got != ` ORDER BY t0."AUTHOR_ID" DESC, t0."ID" ROWS 2` {
+		t.Errorf("got %s", got)
+	}
+	n = build(t, "books", "order=id.desc&offset=3&limit=2")
+	if err := PrepareLimitedWrite(n); err != nil {
+		t.Fatal(err)
+	}
+	b = &Builder{}
+	_ = b.WriteOrder(n, "t0")
+	b.WriteRows(n)
+	if got := b.String(); got != ` ORDER BY t0."ID" DESC ROWS 4 TO 5` {
+		t.Errorf("got %s", got)
+	}
+
+	for qs, msg := range map[string]string{
+		"limit=2":           "needs an explicit order",
+		"order=id&offset=2": "needs a limit",
+		"select=id,authors(name)&order=authors(name)&limit=1": "its own columns",
+	} {
+		n := build(t, "books", qs)
+		err := PrepareLimitedWrite(n)
+		if e, ok := err.(*Error); !ok || e.Code != "FBRST127" || !strings.Contains(e.Message, msg) {
+			t.Errorf("%s: got %v", qs, err)
+		}
+	}
+}

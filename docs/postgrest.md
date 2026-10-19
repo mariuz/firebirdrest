@@ -10,7 +10,8 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
   `not.`, and `or`/`and` trees.
 - `order` (including `order=embed(column)` on to-one embeds), `limit`, `offset`, `Range`,
   `Prefer: count=exact`.
-- `POST`/`PATCH`/`PUT`/`DELETE`, `Prefer: return=…`, `resolution=…`, `missing=default`,
+- `POST`/`PATCH`/`PUT`/`DELETE` (`PATCH`/`DELETE` with `order` and `limit`), `Prefer: return=…`,
+  `resolution=…`, `missing=default`,
   `tx=rollback`, `on_conflict`, `columns`.
 - `/rpc/<name>` with `GET` (read-only) and `POST`.
 - JWT role switching, an anonymous role, a pre-request hook, and claims available to SQL.
@@ -37,7 +38,6 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 
 - `Prefer: count=planned/estimated` (treated as `exact`).
 - `Accept: application/geo+json`, custom media type handlers.
-- `PATCH`/`DELETE` with `limit`.
 - RPC calls with an array body (`Prefer: params=multiple-objects`) or a single unnamed argument
   (`params=single-object`).
 

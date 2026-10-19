@@ -312,6 +312,8 @@ curl -X PATCH  'localhost:3000/books?in_stock=is.true&order=price&limit=10' -d '
 | `tx=rollback` | run everything, then roll back (handy for tests) |
 | `params=multiple-objects` | `/rpc`: call the routine once per object of an array body |
 | `params=single-object` | `/rpc`: pass the whole JSON body to the routine's only text parameter |
+| `handling=strict` | refuse unknown or invalid preferences instead of ignoring them |
+| `max-affected=n` | with `handling=strict`: fail a `PATCH`/`DELETE` that would change more than `n` rows |
 
 `?columns=a,b` limits which keys of the body are inserted. Bodies are JSON; form-urlencoded is
 also accepted for a single row. Binary BLOBs are read and written as base64.
@@ -385,6 +387,7 @@ Settings come from an optional config file (`firebirdrest app.conf`; see
 | `db-pre-request` | `FBREST_DB_PRE_REQUEST` | none | executable procedure run before each request |
 | `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters or `limit` |
 | `db-aggregates-enabled` | `FBREST_DB_AGGREGATES_ENABLED` | `true` | allow `count()`, `sum()`, … in `select` |
+| `db-plan-enabled` | `FBREST_DB_PLAN_ENABLED` | `false` | allow `Accept: application/vnd.pgrst.plan` (Firebird query plans of a request) |
 | `db-request-context` | `FBREST_DB_REQUEST_CONTEXT` | `auto` | set the `request.*` context variables: `auto` (only when some view, trigger or routine mentions `request.`), `always`, `never` |
 | `db-prepared-statements` | `FBREST_DB_PREPARED_STATEMENTS` | `256` | prepared statements cached per role (0 = off) |
 | `db-prepared-statements-idle` | `FBREST_DB_PREPARED_STATEMENTS_IDLE` | `30` | close cached statements unused for this many seconds (see [DDL notes](docs/benchmarks.md#prepared-statements-and-ddl)) |

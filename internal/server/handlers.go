@@ -453,6 +453,9 @@ func (s *Server) update(rc *reqCtx, rel *schema.Relation) error {
 			return err
 		}
 		a, _ := res.RowsAffected()
+		if err := rc.prefer.checkAffected(a); err != nil {
+			return err
+		}
 		affected = int(a)
 	}
 	if rc.prefer.count != "" {
@@ -591,6 +594,9 @@ func (s *Server) delete(rc *reqCtx, rel *schema.Relation) error {
 			return err
 		}
 		affected, _ = res.RowsAffected()
+		if err := rc.prefer.checkAffected(affected); err != nil {
+			return err
+		}
 	}
 	if rc.prefer.count != "" {
 		rc.w.Header().Set("Content-Range", contentRange(0, int(affected), affected))

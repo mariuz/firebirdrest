@@ -182,6 +182,7 @@ type reqCtx struct {
 	prefer prefer
 	tx     *cachedTx
 	status int
+	plan   *planCapture // set for Accept: application/vnd.pgrst.plan
 }
 
 // ServeHTTP routes requests.
@@ -250,10 +251,21 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	rc := &reqCtx{w: w, r: r, sc: sc, prefer: parsePrefer(r.Header.Values("Prefer"))}
+	if err := rc.prefer.check(); err != nil {
+		return err
+	}
 	if err := s.authenticate(rc); err != nil {
 		return err
 	}
+	if format := planFormat(r); format != "" {
+		if err := s.startPlan(rc, format); err != nil {
+			return err
+		}
+	}
 	err := s.route(rc, parts)
+	if err == nil && rc.plan != nil {
+		return rc.plan.write(w)
+	}
 	if err != nil && rc.anon {
 		// like PostgREST: permission errors for anonymous requests ask for credentials
 		if e := toAPIError(err); e.Status == 403 {
@@ -325,8 +337,17 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 	if err := s.setContext(rc); err != nil {
 		return err
 	}
+	if rc.plan != nil {
+		rc.tx.record = &rc.plan.queries
+	}
 	if err := fn(); err != nil {
 		return err
+	}
+	if rc.plan != nil {
+		rc.tx.record = nil
+		if err := rc.plan.explain(rc); err != nil {
+			return err
+		}
 	}
 	done = true
 	if rc.prefer.tx == "rollback" {

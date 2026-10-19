@@ -147,6 +147,14 @@ func (c *stmtCache) clear() {
 type cachedTx struct {
 	tx    *sql.Tx
 	cache *stmtCache // nil disables caching
+	// record, when set, collects the SQL of every statement (for query plans)
+	record *[]string
+}
+
+func (t *cachedTx) note(query string) {
+	if t.record != nil {
+		*t.record = append(*t.record, query)
+	}
 }
 
 // stmt returns a transaction-bound cached statement, or nil.
@@ -166,6 +174,7 @@ func isClosed(err error) bool {
 }
 
 func (t *cachedTx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	t.note(query)
 	if st := t.stmt(ctx, query); st != nil {
 		rows, err := st.QueryContext(ctx, args...)
 		if !isClosed(err) {
@@ -176,6 +185,7 @@ func (t *cachedTx) QueryContext(ctx context.Context, query string, args ...any) 
 }
 
 func (t *cachedTx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	t.note(query)
 	if st := t.stmt(ctx, query); st != nil {
 		res, err := st.ExecContext(ctx, args...)
 		if !isClosed(err) {
@@ -187,6 +197,7 @@ func (t *cachedTx) ExecContext(ctx context.Context, query string, args ...any) (
 
 // PrepareContext returns a statement for repeated use within the transaction.
 func (t *cachedTx) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	t.note(query)
 	if st := t.stmt(ctx, query); st != nil {
 		return st, nil
 	}

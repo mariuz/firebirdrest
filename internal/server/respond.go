@@ -39,27 +39,56 @@ func jsonMarshal(v any) ([]byte, error) {
 
 // prefer holds the parsed Prefer header.
 type prefer struct {
-	ret        string // minimal, representation, headers-only
-	count      string // exact, planned, estimated
-	resolution string // merge-duplicates, ignore-duplicates
-	tx         string // commit, rollback
-	missing    string // default, null
-	params     string // single-object, multiple-objects (RPC)
-	applied    []string
+	ret         string // minimal, representation, headers-only
+	count       string // exact, planned, estimated
+	resolution  string // merge-duplicates, ignore-duplicates
+	tx          string // commit, rollback
+	missing     string // default, null
+	params      string // single-object, multiple-objects (RPC)
+	handling    string // lenient (default), strict
+	maxAffected int    // max-affected=n, enforced with handling=strict; 0 = none
+	applied     []string
+	invalid     []string // preferences that were not understood
+}
+
+// preferValues lists the accepted values of each preference.
+var preferValues = map[string][]string{
+	"return":     {"minimal", "representation", "headers-only"},
+	"count":      {"exact", "planned", "estimated"},
+	"resolution": {"merge-duplicates", "ignore-duplicates"},
+	"tx":         {"commit", "rollback"},
+	"missing":    {"default", "null"},
+	"params":     {"single-object", "multiple-objects"},
+	"handling":   {"lenient", "strict"},
 }
 
 func parsePrefer(values []string) prefer {
 	var p prefer
 	for _, v := range values {
 		for _, item := range strings.Split(v, ",") {
-			k, val, _ := strings.Cut(strings.TrimSpace(item), "=")
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			k, val, _ := strings.Cut(item, "=")
+			if k == "max-affected" {
+				n, err := strconv.Atoi(val)
+				if err != nil || n < 0 {
+					p.invalid = append(p.invalid, item)
+					continue
+				}
+				p.maxAffected = n
+				p.applied = append(p.applied, item)
+				continue
+			}
+			if !slices.Contains(preferValues[k], val) {
+				p.invalid = append(p.invalid, item)
+				continue
+			}
 			switch k {
 			case "return":
 				p.ret = val
 			case "count":
-				if val != "exact" && val != "planned" && val != "estimated" {
-					continue
-				}
 				p.count = val
 			case "resolution":
 				p.resolution = val
@@ -68,17 +97,42 @@ func parsePrefer(values []string) prefer {
 			case "missing":
 				p.missing = val
 			case "params":
-				if val != "single-object" && val != "multiple-objects" {
-					continue
-				}
 				p.params = val
-			default:
-				continue
+			case "handling":
+				p.handling = val
 			}
-			p.applied = append(p.applied, strings.TrimSpace(item))
+			p.applied = append(p.applied, item)
 		}
 	}
 	return p
+}
+
+// check enforces Prefer: handling=strict, which refuses preferences that
+// would otherwise be ignored. max-affected only applies in strict mode, as
+// in PostgREST.
+func (p *prefer) check() error {
+	if p.handling != "strict" {
+		p.maxAffected = 0
+		return nil
+	}
+	if len(p.invalid) > 0 {
+		return &query.Error{Status: 400, Code: "FBRST130",
+			Message: "invalid preferences given with handling=strict",
+			Details: strings.Join(p.invalid, ", ")}
+	}
+	return nil
+}
+
+// checkAffected enforces Prefer: max-affected after a write; the error
+// rolls the transaction back.
+func (p *prefer) checkAffected(n int64) error {
+	if p.maxAffected > 0 && n > int64(p.maxAffected) {
+		return &query.Error{Status: 400, Code: "FBRST131",
+			Message: "the query affects more rows than allowed by max-affected",
+			Details: fmt.Sprintf("%d rows would be affected, max-affected is %d", n, p.maxAffected),
+			Hint:    "nothing was changed; narrow the filters, add a limit, or raise max-affected"}
+	}
+	return nil
 }
 
 // setApplied replaces the applied value of a preference, e.g. when

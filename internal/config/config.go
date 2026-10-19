@@ -18,6 +18,7 @@ type Config struct {
 	DBPreRequest  string // executable procedure run before each request
 	DBSafeUpdates bool   // reject PATCH/DELETE without filters
 	DBAggregates  bool   // allow count()/sum()/avg()/min()/max() in select
+	DBPlan        bool   // allow Accept: application/vnd.pgrst.plan (query plans)
 	// DBRequestContext: "auto" sets the request.* context variables only when
 	// some database object reads them; "always" or "never" force it.
 	DBRequestContext string
@@ -49,6 +50,7 @@ var keys = map[string]string{
 	"db-pre-request":              "FBREST_DB_PRE_REQUEST",
 	"db-safe-updates":             "FBREST_DB_SAFE_UPDATES",
 	"db-aggregates-enabled":       "FBREST_DB_AGGREGATES_ENABLED",
+	"db-plan-enabled":             "FBREST_DB_PLAN_ENABLED",
 	"db-request-context":          "FBREST_DB_REQUEST_CONTEXT",
 	"db-prepared-statements":      "FBREST_DB_PREPARED_STATEMENTS",
 	"db-prepared-statements-idle": "FBREST_DB_PREPARED_STATEMENTS_IDLE",
@@ -157,6 +159,7 @@ func Load(path string) (*Config, error) {
 	}
 	c.DBSafeUpdates = isTrue(get("FBREST_DB_SAFE_UPDATES", "true"))
 	c.DBAggregates = isTrue(get("FBREST_DB_AGGREGATES_ENABLED", "true"))
+	c.DBPlan = isTrue(get("FBREST_DB_PLAN_ENABLED", "false"))
 	c.AdminPprof = isTrue(get("FBREST_ADMIN_PPROF", "false"))
 	c.DBRequestContext = strings.ToLower(get("FBREST_DB_REQUEST_CONTEXT", "auto"))
 	switch c.DBRequestContext {

@@ -5,6 +5,15 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- `Prefer: handling=strict` refuses unknown or invalid preferences (`FBRST130`); the default
+  `lenient` ignores them, as before.
+- `Prefer: max-affected=n` (with `handling=strict`, as in PostgREST): a `PATCH` or `DELETE` that
+  would change more than `n` rows fails with `FBRST131` and is rolled back.
+- Query plans: with `db-plan-enabled = true`, `Accept: application/vnd.pgrst.plan` (`+text` or
+  `+json`) returns Firebird's explained plan of every statement a `GET`/`HEAD` request runs,
+  including embeds and counts, instead of the data.
+
 ## [0.1.1] - 2026-10-19
 
 Ordering by embedded columns, limited `PATCH`/`DELETE`, bulk RPC calls, estimated counts, and

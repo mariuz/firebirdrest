@@ -107,6 +107,19 @@ curl -X DELETE 'localhost:3000/audit_log?order=logged_at&offset=1000&limit=100'
 
 Firebird runs these as `UPDATE … ORDER BY … ROWS m TO n` and `DELETE … ORDER BY … ROWS m TO n`.
 
+## Capping how many rows a write changes
+
+`Prefer: max-affected=n` makes a `PATCH` or `DELETE` fail, changing nothing, when it would affect
+more than `n` rows. As in PostgREST it only applies together with `handling=strict`:
+
+```sh
+curl -X DELETE 'localhost:3000/orders?status=eq.cancelled' \
+     -H 'Prefer: handling=strict, max-affected=100'
+```
+
+Over the limit the response is `400` with `FBRST131` and the number of rows that would have
+changed; the transaction is rolled back. Use it to guard writes whose filters come from user input.
+
 ## Safety
 
 `PATCH` and `DELETE` without any filter are refused with `400` so a missing parameter can't
@@ -125,6 +138,8 @@ a filter. Set `db-safe-updates = false` to allow unrestricted writes.
 | `tx=rollback` | run the request, then roll back: nothing is saved |
 | `params=multiple-objects` | `/rpc`: call the routine once per object of an array body ([details](rpc.md#calling-a-routine-many-times)) |
 | `params=single-object` | `/rpc`: pass the whole JSON body to the routine's only text parameter ([details](rpc.md#passing-the-whole-body)) |
+| `handling=strict` | refuse the request (`FBRST130`) if any preference is unknown or invalid; the default `lenient` ignores them |
+| `max-affected=n` | with `handling=strict`: fail a `PATCH`/`DELETE` that would change more than `n` rows ([details](#capping-how-many-rows-a-write-changes)) |
 
 Applied preferences are echoed in `Preference-Applied`. Combine them with commas or several
 `Prefer` headers.

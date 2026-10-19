@@ -16,6 +16,45 @@ curl 'localhost:3000/books?select=id,title' -H 'Accept: text/csv'
 curl 'localhost:3000/books?id=eq.1' -H 'Accept: application/vnd.pgrst.object+json'
 ```
 
+## Query plans
+
+To see how Firebird runs a request, ask for its plan instead of its data. This is off by default,
+because plans show table and index names: set `db-plan-enabled = true` (for example in
+development).
+
+```sh
+curl 'localhost:3000/books?select=title,authors(name)&price=lt.10' -H 'Accept: application/vnd.pgrst.plan'
+```
+
+```text
+-- statement 1
+SELECT t0."TITLE", t0."AUTHOR_ID" FROM "BOOKS" t0 WHERE ((t0."PRICE" < ?))
+
+Select Expression
+    -> Filter
+        -> Table "BOOKS" as "T0" Full Scan
+
+-- statement 2
+SELECT t0."NAME", t0."ID" FROM "AUTHORS" t0 WHERE (t0."ID" IN (?, ?))
+
+Select Expression
+    -> Filter
+        -> Table "AUTHORS" as "T0" Access By ID
+            -> Bitmap
+                -> Index "RDB$PRIMARY1" List Scan (full match)
+```
+
+Here `price` has no index, so the books are read with a full scan.
+
+- The response lists every statement the request runs: one per embed level, and the count with
+  `Prefer: count=exact`. The plan is Firebird's explained plan (`MON$EXPLAINED_PLAN`).
+- `application/vnd.pgrst.plan+json` returns `[{"query": "...", "plan": "..."}]`;
+  `application/vnd.pgrst.plan` and `+text` return text.
+- Plans are available for `GET` and `HEAD` (reads and selectable procedures). To know the
+  statements of embedded resources the request is run in its read-only transaction, with the
+  result discarded. Other methods are refused with `405` (`FBRST132`): they would have to write.
+- With plans disabled, the plan media types get `406`.
+
 ## OpenAPI
 
 `GET /` returns an [OpenAPI 3](https://spec.openapis.org/oas/v3.0.3) document describing every
@@ -85,6 +124,9 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST127` | `PATCH`/`DELETE` with `limit` but no `order`, or `offset` without `limit` |
 | `FBRST128` | more than 200 objects for a selectable procedure with `params=multiple-objects` |
 | `FBRST129` | `params=single-object` on a routine without exactly one text parameter |
+| `FBRST130` | an unknown or invalid preference with `Prefer: handling=strict` |
+| `FBRST131` | a `PATCH`/`DELETE` would affect more rows than `Prefer: max-affected` |
+| `FBRST132` | a query plan was asked for a method other than `GET`/`HEAD` |
 | `FBRST200` | no relationship between the tables |
 | `FBRST201` | several relationships, `!hint` needed |
 | `FBRST202` | unknown procedure or function, or unknown argument |

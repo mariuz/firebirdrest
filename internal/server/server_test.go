@@ -551,3 +551,82 @@ func TestCountPreferences(t *testing.T) {
 		}
 	}
 }
+
+func TestPreferStrict(t *testing.T) {
+	ts := testServer(t)
+	user := "Bearer " + token(t, jwt.MapClaims{"role": "web_user"})
+	strict := "handling=strict"
+
+	// max-affected: over the limit fails and changes nothing (author 1 has 2 books)
+	r := do(t, ts, "PATCH", "/books?author_id=eq.1", `{"price":1}`, "Authorization", user, "Prefer", strict+", max-affected=1")
+	if r.status != 400 || !strings.Contains(r.body, `"code":"FBRST131"`) {
+		t.Errorf("over max-affected: %d %s", r.status, r.body)
+	}
+	jsonEq(t, do(t, ts, "GET", "/books?select=price&author_id=eq.1&order=id", "").body, `[{"price":9.99},{"price":8.50}]`)
+	r = do(t, ts, "DELETE", "/book_tags?book_id=eq.1", "", "Authorization", user, "Prefer", strict+", max-affected=1")
+	if r.status != 400 || !strings.Contains(r.body, `"code":"FBRST131"`) {
+		t.Errorf("delete over max-affected: %d %s", r.status, r.body)
+	}
+	jsonEq(t, do(t, ts, "GET", "/book_tags?select=tag_id&book_id=eq.1&order=tag_id", "").body, `[{"tag_id":1},{"tag_id":3}]`)
+
+	// within the limit, and lenient mode, pass
+	r = do(t, ts, "PATCH", "/books?author_id=eq.1", `{"price":1}`, "Authorization", user,
+		"Prefer", strict+", max-affected=2", "Prefer", "tx=rollback")
+	if r.status != 204 || !strings.Contains(r.header.Get("Preference-Applied"), "max-affected=2") {
+		t.Errorf("within max-affected: %d %s %q", r.status, r.body, r.header.Get("Preference-Applied"))
+	}
+	r = do(t, ts, "PATCH", "/books?author_id=eq.1", `{"price":1}`, "Authorization", user,
+		"Prefer", "max-affected=1", "Prefer", "tx=rollback")
+	if r.status != 204 {
+		t.Errorf("lenient max-affected: %d %s", r.status, r.body)
+	}
+
+	// strict refuses preferences it doesn't understand; lenient ignores them
+	if r = do(t, ts, "GET", "/books?select=id&id=eq.1", "", "Prefer", strict+", count=sometimes"); r.status != 400 ||
+		!strings.Contains(r.body, `"code":"FBRST130"`) || !strings.Contains(r.body, "count=sometimes") {
+		t.Errorf("strict invalid: %d %s", r.status, r.body)
+	}
+	if r = do(t, ts, "GET", "/books?select=id&id=eq.1", "", "Prefer", "count=sometimes"); r.status != 200 {
+		t.Errorf("lenient invalid: %d %s", r.status, r.body)
+	}
+}
+
+func TestQueryPlans(t *testing.T) {
+	plain := testServer(t)
+	if r := do(t, plain, "GET", "/books", "", "Accept", "application/vnd.pgrst.plan"); r.status != 406 {
+		t.Errorf("plans disabled: %d %s", r.status, r.body)
+	}
+
+	ts := testServerWith(t, func(c *config.Config) { c.DBPlan = true })
+	// one statement per embed level, plus the count
+	r := do(t, ts, "GET", "/books?select=title,authors(name)&price=lt.10&order=price", "",
+		"Accept", "application/vnd.pgrst.plan", "Prefer", "count=exact")
+	if r.status != 200 || !strings.HasPrefix(r.header.Get("Content-Type"), "application/vnd.pgrst.plan+text") ||
+		strings.Count(r.body, "-- statement ") != 3 || strings.Count(r.body, "Select Expression") != 3 ||
+		!strings.Contains(r.body, `FROM "AUTHORS"`) || !strings.Contains(r.body, "SELECT COUNT(*)") {
+		t.Errorf("text plan: %d %s", r.status, r.body)
+	}
+
+	r = do(t, ts, "GET", "/books?select=id&id=eq.1", "", "Accept", `application/vnd.pgrst.plan+json; for="text/csv"`)
+	var plans []struct{ Query, Plan string }
+	if err := json.Unmarshal([]byte(r.body), &plans); err != nil || len(plans) != 1 ||
+		!strings.Contains(plans[0].Plan, "Unique Scan") {
+		t.Errorf("json plan: %d %s", r.status, r.body)
+	}
+	// a selectable procedure
+	r = do(t, ts, "GET", "/rpc/books_by_country?country=UK", "", "Accept", "application/vnd.pgrst.plan")
+	if r.status != 200 || !strings.Contains(r.body, "BOOKS_BY_COUNTRY") {
+		t.Errorf("rpc plan: %d %s", r.status, r.body)
+	}
+	// errors of the request itself still come back as errors
+	if r = do(t, ts, "GET", "/books?select=nope", "", "Accept", "application/vnd.pgrst.plan"); r.status != 400 {
+		t.Errorf("bad request plan: %d %s", r.status, r.body)
+	}
+	// writes would have to run: refused
+	for _, m := range []string{"POST", "PATCH", "DELETE"} {
+		if r = do(t, ts, m, "/books?id=eq.1", `{"price":1}`, "Accept", "application/vnd.pgrst.plan"); r.status != 405 ||
+			!strings.Contains(r.body, "FBRST132") {
+			t.Errorf("%s plan: %d %s", m, r.status, r.body)
+		}
+	}
+}

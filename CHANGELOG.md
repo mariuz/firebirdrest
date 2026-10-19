@@ -5,6 +5,10 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-19
+
+Write guards with `max-affected`, query plans, and per-request time zones.
+
 ### Added
 - `Prefer: handling=strict` refuses unknown or invalid preferences (`FBRST130`); the default
   `lenient` ignores them, as before.
@@ -19,6 +23,10 @@ All notable changes to FirebirdREST are listed here. The project follows
 - `examples/bookstore-fb4.sql` adds a `meetings` table with time zone columns for Firebird 4+.
 - The release workflow can also publish the Docker image to Docker Hub, a Homebrew cask and a
   Scoop manifest, each once its secret is configured (see `RELEASING.md`).
+
+### Changed
+- Release notes are taken from the version's section of `CHANGELOG.md`, also for a release first
+  drafted on GitHub. `RELEASING.md` describes the release steps.
 
 ## [0.1.1] - 2026-10-19
 
@@ -110,6 +118,7 @@ First release. Supports Firebird 3, 4 and 5.
 - `admin-pprof` serves Go profiling endpoints on the admin port.
 - Release workflow can be started from GitHub (Actions, then Release, then Run workflow).
 
-[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/mariuz/firebirdrest/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/mariuz/firebirdrest/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mariuz/firebirdrest/releases/tag/v0.1.0

@@ -96,8 +96,10 @@ Known issue with the current snapshot: text columns declared `CHARACTER SET NONE
 in a database created without `DEFAULT CHARACTER SET`) fail with *string right truncation*
 once a value is longer than a quarter of the column's size, when the client connects as UTF8
 (FirebirdREST's default). Firebird 6 reads the row buffer the driver asks for as UTF8 characters
-(4 bytes each) instead of bytes, as Firebird 5 does. Until the snapshot is
-fixed, either create the database with a character set:
+(4 bytes each) instead of bytes, as Firebird 5 does. A fix in the Go driver FirebirdREST uses,
+which sizes that buffer for the connection character set, is proposed in
+[nakagami/firebirdsql#317](https://github.com/nakagami/firebirdsql/pull/317). Until a driver
+release includes it, either create the database with a character set:
 
 ```sql
 CREATE DATABASE 'app.fdb' DEFAULT CHARACTER SET UTF8;

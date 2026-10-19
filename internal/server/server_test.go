@@ -630,3 +630,54 @@ func TestQueryPlans(t *testing.T) {
 		}
 	}
 }
+
+func TestPreferTimezone(t *testing.T) {
+	ts := testServer(t)
+	if r := do(t, ts, "GET", "/meetings?select=id&limit=1", ""); r.status == 404 {
+		// Firebird 3: no time zones; the preference must not get in the way
+		r = do(t, ts, "GET", "/books?select=id&id=eq.1", "", "Prefer", "timezone=UTC")
+		if r.status != 200 || strings.Contains(r.header.Get("Preference-Applied"), "timezone") {
+			t.Errorf("Firebird 3 timezone: %d %q", r.status, r.header.Get("Preference-Applied"))
+		}
+		t.Skip("no time zone types (Firebird 3): examples/bookstore-fb4.sql not loaded")
+	}
+	get := func(path, tz string) resp {
+		t.Helper()
+		if tz == "" {
+			return do(t, ts, "GET", path, "")
+		}
+		return do(t, ts, "GET", path, "", "Prefer", "timezone="+tz)
+	}
+	// values keep their instant and take the requested zone's offset
+	jsonEq(t, get("/meetings?select=starts_at&order=id", "").body,
+		`[{"starts_at":"2026-10-20T09:00:00+03:00"},{"starts_at":"2026-10-21T15:30:00-04:00"}]`)
+	jsonEq(t, get("/meetings?select=starts_at&order=id", "UTC").body,
+		`[{"starts_at":"2026-10-20T06:00:00Z"},{"starts_at":"2026-10-21T19:30:00Z"}]`)
+	r := get("/meetings?select=starts_at&order=id", "Asia/Tokyo")
+	jsonEq(t, r.body, `[{"starts_at":"2026-10-20T15:00:00+09:00"},{"starts_at":"2026-10-22T04:30:00+09:00"}]`)
+	if pa := r.header.Get("Preference-Applied"); !strings.Contains(pa, "timezone=Asia/Tokyo") {
+		t.Errorf("Preference-Applied %q", pa)
+	}
+	// a timestamp without offset in a filter is read in the session zone
+	jsonEq(t, get("/meetings?select=id&starts_at=eq.2026-10-20T15:00:00", "Asia/Tokyo").body, `[{"id":1}]`)
+
+	// the session zone is set for the request and reset afterwards
+	if r := get("/rpc/session_zone", "Asia/Tokyo"); r.body != `"Asia/Tokyo"` {
+		t.Errorf("session zone %s", r.body)
+	}
+	for i := 0; i < 8; i++ { // more requests than pooled connections
+		if r := get("/rpc/session_zone", ""); r.body == `"Asia/Tokyo"` {
+			t.Fatalf("SET TIME ZONE leaked to a pooled connection")
+		}
+	}
+
+	// unknown zones: ignored, or refused with handling=strict
+	r = get("/meetings?select=id&id=eq.1", "Mars/Olympus_Mons")
+	if r.status != 200 || strings.Contains(r.header.Get("Preference-Applied"), "timezone") {
+		t.Errorf("lenient unknown zone: %d %q", r.status, r.header.Get("Preference-Applied"))
+	}
+	r = do(t, ts, "GET", "/meetings?select=id&id=eq.1", "", "Prefer", "handling=strict, timezone=Mars/Olympus_Mons")
+	if r.status != 400 || !strings.Contains(r.body, "FBRST130") {
+		t.Errorf("strict unknown zone: %d %s", r.status, r.body)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -257,6 +258,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 	if err := s.authenticate(rc); err != nil {
 		return err
 	}
+	if rc.prefer.loc != nil {
+		if !hasTimeZones(sc.Version) {
+			// Firebird 3 has no time zone support: nothing to apply
+			rc.prefer.dropApplied("timezone")
+			rc.prefer.timezone, rc.prefer.loc = "", nil
+		} else {
+			rc.r = rc.r.WithContext(query.WithTimeZone(rc.r.Context(), rc.prefer.loc))
+		}
+	}
 	if format := planFormat(r); format != "" {
 		if err := s.startPlan(rc, format); err != nil {
 			return err
@@ -329,11 +339,33 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 	}
 	rc.tx = &cachedTx{tx: tx, cache: p.cache}
 	done := false
+	zoned := false
+	// the connection goes back to the pool: undo SET TIME ZONE first
+	resetZone := func() {
+		if zoned {
+			zoned = false
+			tx.ExecContext(context.Background(), "SET TIME ZONE LOCAL")
+		}
+	}
 	defer func() {
 		if !done {
+			resetZone()
 			tx.Rollback()
 		}
 	}()
+	if rc.prefer.timezone != "" {
+		if _, err := tx.ExecContext(ctx, "SET TIME ZONE '"+strings.ReplaceAll(rc.prefer.timezone, "'", "''")+"'"); err != nil {
+			if rc.prefer.handling == "strict" {
+				return &query.Error{Status: 400, Code: "FBRST130", Message: "invalid preferences given with handling=strict",
+					Details: "timezone=" + rc.prefer.timezone + ": " + firstLine(err.Error())}
+			}
+			// Firebird doesn't know this zone: ignore the preference
+			rc.prefer.dropApplied("timezone")
+			rc.r = rc.r.WithContext(query.WithTimeZone(rc.r.Context(), nil))
+		} else {
+			zoned = true
+		}
+	}
 	if err := s.setContext(rc); err != nil {
 		return err
 	}
@@ -349,6 +381,7 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 			return err
 		}
 	}
+	resetZone()
 	done = true
 	if rc.prefer.tx == "rollback" {
 		return tx.Rollback()
@@ -445,4 +478,12 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+// hasTimeZones reports whether the engine version (e.g. "5.0.4") supports
+// time zones (Firebird 4+).
+func hasTimeZones(version string) bool {
+	major, _, _ := strings.Cut(version, ".")
+	n, err := strconv.Atoi(major)
+	return err == nil && n >= 4
 }

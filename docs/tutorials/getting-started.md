@@ -15,7 +15,7 @@ Compose starts three containers:
 
 | Service | Address | What it is |
 |---|---|---|
-| `firebird` | `localhost:3050` | Firebird 5 with [`examples/bookstore.sql`](https://github.com/mariuz/firebirdrest/blob/main/examples/bookstore.sql) loaded |
+| `firebird` | `localhost:3050` | Firebird 5 with [`examples/bookstore.sql`](https://github.com/mariuz/firebirdrest/blob/main/examples/bookstore.sql) and [`bookstore-fb4.sql`](https://github.com/mariuz/firebirdrest/blob/main/examples/bookstore-fb4.sql) loaded |
 | `firebirdrest` | <http://localhost:3000> | the API |
 | `swagger` | <http://localhost:8080> | Swagger UI reading the API's OpenAPI document |
 

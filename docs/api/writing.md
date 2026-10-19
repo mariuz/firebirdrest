@@ -140,6 +140,7 @@ a filter. Set `db-safe-updates = false` to allow unrestricted writes.
 | `params=single-object` | `/rpc`: pass the whole JSON body to the routine's only text parameter ([details](rpc.md#passing-the-whole-body)) |
 | `handling=strict` | refuse the request (`FBRST130`) if any preference is unknown or invalid; the default `lenient` ignores them |
 | `max-affected=n` | with `handling=strict`: fail a `PATCH`/`DELETE` that would change more than `n` rows ([details](#capping-how-many-rows-a-write-changes)) |
+| `timezone=Europe/Berlin` | run the request in that time zone (Firebird 4+, [details](#time-zones)) |
 
 Applied preferences are echoed in `Preference-Applied`. Combine them with commas or several
 `Prefer` headers.
@@ -161,3 +162,23 @@ Applied preferences are echoed in `Preference-Applied`. Combine them with commas
 
 On input, ISO 8601 timestamps (`2026-10-18T10:00:00+03:00`) and JSON numbers or strings for
 numeric columns are accepted. JSON objects and arrays are stored as their text.
+
+### Time zones
+
+`Prefer: timezone=<IANA name>` runs the request in that time zone (Firebird 4+), for reads and
+writes:
+
+```sh
+curl 'localhost:3000/meetings?select=title,starts_at' -H 'Prefer: timezone=Asia/Tokyo'
+# [{"title":"Release planning","starts_at":"2026-10-20T15:00:00+09:00"}, ...]
+```
+
+- `TIME`/`TIMESTAMP WITH TIME ZONE` values are returned in that zone: the same instant, with the
+  zone's offset. (Firebird stores a zone in each value; without the preference you get the zone
+  it was stored with.)
+- The Firebird session uses the zone too (`SET TIME ZONE`): `CURRENT_TIMESTAMP`, column defaults,
+  and timestamps without an offset in filters or bodies (`starts_at=eq.2026-10-20T15:00:00`) are
+  in that zone. The session zone is reset before the connection goes back to the pool.
+- Plain `TIME` and `TIMESTAMP` columns have no zone and are not converted.
+- An unknown zone is ignored (it is missing from `Preference-Applied`); with `handling=strict` it
+  is refused with `FBRST130`. Firebird 3 has no time zones, so there the preference is ignored.

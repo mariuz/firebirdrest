@@ -314,6 +314,7 @@ curl -X PATCH  'localhost:3000/books?in_stock=is.true&order=price&limit=10' -d '
 | `params=single-object` | `/rpc`: pass the whole JSON body to the routine's only text parameter |
 | `handling=strict` | refuse unknown or invalid preferences instead of ignoring them |
 | `max-affected=n` | with `handling=strict`: fail a `PATCH`/`DELETE` that would change more than `n` rows |
+| `timezone=Europe/Berlin` | return `WITH TIME ZONE` values in that zone and run the session in it (Firebird 4+) |
 
 `?columns=a,b` limits which keys of the body are inserted. Bodies are JSON; form-urlencoded is
 also accepted for a single row. Binary BLOBs are read and written as base64.

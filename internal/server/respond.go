@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nakagami/firebirdsql"
 
@@ -39,14 +40,16 @@ func jsonMarshal(v any) ([]byte, error) {
 
 // prefer holds the parsed Prefer header.
 type prefer struct {
-	ret         string // minimal, representation, headers-only
-	count       string // exact, planned, estimated
-	resolution  string // merge-duplicates, ignore-duplicates
-	tx          string // commit, rollback
-	missing     string // default, null
-	params      string // single-object, multiple-objects (RPC)
-	handling    string // lenient (default), strict
-	maxAffected int    // max-affected=n, enforced with handling=strict; 0 = none
+	ret         string         // minimal, representation, headers-only
+	count       string         // exact, planned, estimated
+	resolution  string         // merge-duplicates, ignore-duplicates
+	tx          string         // commit, rollback
+	missing     string         // default, null
+	params      string         // single-object, multiple-objects (RPC)
+	handling    string         // lenient (default), strict
+	maxAffected int            // max-affected=n, enforced with handling=strict; 0 = none
+	timezone    string         // timezone=<IANA name>
+	loc         *time.Location // the loaded timezone
 	applied     []string
 	invalid     []string // preferences that were not understood
 }
@@ -71,6 +74,16 @@ func parsePrefer(values []string) prefer {
 				continue
 			}
 			k, val, _ := strings.Cut(item, "=")
+			if k == "timezone" {
+				loc, err := time.LoadLocation(val)
+				if err != nil || val == "" || val == "Local" {
+					p.invalid = append(p.invalid, item)
+					continue
+				}
+				p.timezone, p.loc = val, loc
+				p.applied = append(p.applied, item)
+				continue
+			}
 			if k == "max-affected" {
 				n, err := strconv.Atoi(val)
 				if err != nil || n < 0 {
@@ -133,6 +146,18 @@ func (p *prefer) checkAffected(n int64) error {
 			Hint:    "nothing was changed; narrow the filters, add a limit, or raise max-affected"}
 	}
 	return nil
+}
+
+// dropApplied removes a preference from Preference-Applied, e.g. a
+// timezone the database refused.
+func (p *prefer) dropApplied(key string) {
+	out := p.applied[:0]
+	for _, a := range p.applied {
+		if k, _, _ := strings.Cut(a, "="); k != key {
+			out = append(out, a)
+		}
+	}
+	p.applied = out
 }
 
 // setApplied replaces the applied value of a preference, e.g. when

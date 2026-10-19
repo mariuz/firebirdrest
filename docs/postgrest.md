@@ -17,7 +17,7 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
   `params=single-object`.
 - JWT role switching, an anonymous role, a pre-request hook, and claims available to SQL.
 - `application/vnd.pgrst.object+json`, CSV, OpenAPI at `/`, `{code, message, details, hint}` errors.
-- `Prefer: handling=strict` and `max-affected`; query plans with `Accept: application/vnd.pgrst.plan`
+- `Prefer: handling=strict`, `max-affected` and `timezone`; query plans with `Accept: application/vnd.pgrst.plan`
   (behind `db-plan-enabled`).
 
 ## Different
@@ -40,6 +40,7 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 | `params=multiple-objects` on set-returning routines | no limit | at most 200 objects per request |
 | `count=planned` | the planner's estimate of the query | the table's row count from index statistics; exact for filtered requests, views and procedures |
 | Query plans | `EXPLAIN` output (text or JSON), also for writes | Firebird's explained plan per statement, for `GET`/`HEAD` only |
+| `Prefer: timezone` | changes how `timestamptz` is displayed | `WITH TIME ZONE` values carry a zone in Firebird, so they are converted to the requested zone; ignored on Firebird 3 |
 
 ## Not implemented yet
 

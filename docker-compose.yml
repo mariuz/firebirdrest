@@ -10,7 +10,9 @@ services:
       FIREBIRD_ROOT_PASSWORD: masterkey
       FIREBIRD_DATABASE: bookstore.fdb
     volumes:
-      - ./examples/bookstore.sql:/docker-entrypoint-initdb.d/bookstore.sql:ro
+      # run in name order: the schema first, then the Firebird 4+ additions
+      - ./examples/bookstore.sql:/docker-entrypoint-initdb.d/10-bookstore.sql:ro
+      - ./examples/bookstore-fb4.sql:/docker-entrypoint-initdb.d/20-bookstore-fb4.sql:ro
       - fbdata:/var/lib/firebird/data
     ports:
       - "3050:3050"

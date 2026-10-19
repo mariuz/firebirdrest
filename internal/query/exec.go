@@ -360,6 +360,7 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		return nil, err
 	}
 	defer rs.Close()
+	loc := TimeZoneOf(ctx)
 	nf := len(n.Fields)
 	total := len(sel)
 	fieldCols := make([]*schema.Column, nf)
@@ -378,7 +379,7 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		}
 		r := &row{obj: newObj(n)}
 		for i, f := range n.Fields {
-			r.obj.Set(f.Key, Output(vals[i], fieldCols[i]))
+			r.obj.Set(f.Key, OutputIn(vals[i], fieldCols[i], loc))
 		}
 		r.hidden = vals[nf : nf+nHidden]
 		r.match = vals[nf+nHidden : nf+nHidden+len(matchCols)]
@@ -411,9 +412,9 @@ func executeComputed(ctx context.Context, q Querier, c *ReadNode, key []any) (*r
 	for _, f := range c.Fields {
 		for i, out := range rt.Out {
 			if out.DBName == f.Col.DBName {
-				v := Output(vals[i], out)
+				v := OutputIn(vals[i], out, TimeZoneOf(ctx))
 				if f.Cast != "" {
-					v = Output(vals[i], FieldColumn(f))
+					v = OutputIn(vals[i], FieldColumn(f), TimeZoneOf(ctx))
 				}
 				r.obj.Set(f.Key, v)
 			}
@@ -615,6 +616,31 @@ func chunks(keys [][]any, size int) [][][]any {
 		out = append(out, keys)
 	}
 	return out
+}
+
+type timeZoneKey struct{}
+
+// WithTimeZone returns a context whose reads render TIME/TIMESTAMP WITH TIME
+// ZONE values in loc (Prefer: timezone=).
+func WithTimeZone(ctx context.Context, loc *time.Location) context.Context {
+	return context.WithValue(ctx, timeZoneKey{}, loc)
+}
+
+// TimeZoneOf returns the time zone set by WithTimeZone, or nil.
+func TimeZoneOf(ctx context.Context) *time.Location {
+	loc, _ := ctx.Value(timeZoneKey{}).(*time.Location)
+	return loc
+}
+
+// OutputIn is Output, with TIME/TIMESTAMP WITH TIME ZONE values moved to
+// loc first (the same instant, shown with loc's offset). A nil loc keeps the
+// value's own zone.
+func OutputIn(v any, c *schema.Column, loc *time.Location) any {
+	if t, ok := v.(time.Time); ok && loc != nil && c != nil &&
+		(c.FieldType == schema.TTimestampTZ || c.FieldType == schema.TTimeTZ) {
+		v = t.In(loc)
+	}
+	return Output(v, c)
 }
 
 // Output converts a value from the driver into its JSON form.

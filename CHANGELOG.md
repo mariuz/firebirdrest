@@ -13,6 +13,10 @@ All notable changes to FirebirdREST are listed here. The project follows
 - Query plans: with `db-plan-enabled = true`, `Accept: application/vnd.pgrst.plan` (`+text` or
   `+json`) returns Firebird's explained plan of every statement a `GET`/`HEAD` request runs,
   including embeds and counts, instead of the data.
+- `Prefer: timezone=<IANA name>` (Firebird 4+): `TIME`/`TIMESTAMP WITH TIME ZONE` values are
+  returned in that zone, and the Firebird session runs in it (`SET TIME ZONE`, reset before the
+  connection is reused). Unknown zones are ignored, or refused with `handling=strict`.
+- `examples/bookstore-fb4.sql` adds a `meetings` table with time zone columns for Firebird 4+.
 - The release workflow can also publish the Docker image to Docker Hub, a Homebrew cask and a
   Scoop manifest, each once its secret is configured (see `RELEASING.md`).
 

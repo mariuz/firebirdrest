@@ -154,7 +154,7 @@ func (s *Server) rpc(rc *reqCtx, rt *schema.Routine) error {
 			if err != nil {
 				return err
 			}
-			vals = append(vals, query.Output(v, col))
+			vals = append(vals, query.OutputIn(v, col, query.TimeZoneOf(rc.r.Context())))
 		}
 		if multi {
 			return s.writeValue(rc, vals)
@@ -291,7 +291,7 @@ func executeProcedure(rc *reqCtx, rt *schema.Routine, call string, vals []any) (
 			return nil, err
 		}
 		for i, c := range rt.Out {
-			obj.Set(c.Name, query.Output(v[i], c))
+			obj.Set(c.Name, query.OutputIn(v[i], c, query.TimeZoneOf(rc.r.Context())))
 		}
 	}
 	return obj, rows.Err()

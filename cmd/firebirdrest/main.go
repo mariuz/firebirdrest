@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+	_ "time/tzdata" // Prefer: timezone= works without a system time zone database
 
 	"github.com/nakagami/firebirdsql"
 

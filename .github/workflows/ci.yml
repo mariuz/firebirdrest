@@ -51,6 +51,11 @@ jobs:
           docker cp examples/bookstore.sql ${{ job.services.firebird.id }}:/tmp/bookstore.sql
           docker exec ${{ job.services.firebird.id }} /opt/firebird/bin/isql \
             -user SYSDBA -password masterkey localhost:/var/lib/firebird/data/test.fdb -i /tmp/bookstore.sql
+          if [ "${{ matrix.firebird }}" != "3" ]; then  # time zone types: Firebird 4+
+            docker cp examples/bookstore-fb4.sql ${{ job.services.firebird.id }}:/tmp/bookstore-fb4.sql
+            docker exec ${{ job.services.firebird.id }} /opt/firebird/bin/isql \
+              -user SYSDBA -password masterkey localhost:/var/lib/firebird/data/test.fdb -i /tmp/bookstore-fb4.sql
+          fi
       - name: Vet
         run: go vet ./...
       - name: Test

@@ -98,8 +98,10 @@ once a value is longer than a quarter of the column's size, when the client conn
 (FirebirdREST's default). Firebird 6 reads the row buffer the driver asks for as UTF8 characters
 (4 bytes each) instead of bytes, as Firebird 5 does. A fix in the Go driver FirebirdREST uses,
 which sizes that buffer for the connection character set, is proposed in
-[nakagami/firebirdsql#317](https://github.com/nakagami/firebirdsql/pull/317). Until a driver
-release includes it, either create the database with a character set:
+[nakagami/firebirdsql#317](https://github.com/nakagami/firebirdsql/pull/317). The Python driver
+`firebirdsql` has the same problem and the same fix, proposed in
+[nakagami/pyfirebirdsql#142](https://github.com/nakagami/pyfirebirdsql/pull/142). Until a
+driver release includes it, either create the database with a character set:
 
 ```sql
 CREATE DATABASE 'app.fdb' DEFAULT CHARACTER SET UTF8;

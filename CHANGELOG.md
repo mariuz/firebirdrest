@@ -5,6 +5,11 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-19
+
+Ordering by embedded columns, limited `PATCH`/`DELETE`, bulk RPC calls, estimated counts, and
+Firebird 6 support (tested against the 6.0 snapshot).
+
 ### Added
 - Ordering by a column of a to-one embed, as in PostgREST: `order=authors(name).desc`. It works at
   any level (`books.order=authors(name)`), by alias and on spread embeds. To-many embeds are
@@ -90,5 +95,6 @@ First release. Supports Firebird 3, 4 and 5.
 - `admin-pprof` serves Go profiling endpoints on the admin port.
 - Release workflow can be started from GitHub (Actions, then Release, then Run workflow).
 
-[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mariuz/firebirdrest/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mariuz/firebirdrest/releases/tag/v0.1.0

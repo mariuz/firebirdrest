@@ -55,7 +55,7 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
     [releases page](https://github.com/mariuz/firebirdrest/releases), for example:
 
     ```sh
-    curl -L https://github.com/mariuz/firebirdrest/releases/download/v0.1.0/firebirdrest_0.1.0_linux_amd64.tar.gz | tar xz
+    curl -L https://github.com/mariuz/firebirdrest/releases/download/v0.1.1/firebirdrest_0.1.1_linux_amd64.tar.gz | tar xz
     ./firebirdrest --version
     ```
 

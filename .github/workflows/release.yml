@@ -4,6 +4,8 @@ name: Release
 #  - push a tag:       git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0
 #  - from GitHub:      Actions -> Release -> Run workflow, enter the version (e.g. 0.2.0).
 #                      The tag is created on the selected branch after the tests pass.
+# Before releasing, move the [Unreleased] entries of CHANGELOG.md under "## [x.y.z] - date":
+# that section becomes the release notes (replacing any text already on the GitHub release).
 on:
   push:
     tags: ["v*"]
@@ -63,11 +65,28 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: Release notes from CHANGELOG.md
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          v="${TAG#v}"
+          # the "## [x.y.z]" section, up to the next "## [" heading
+          awk -v v="$v" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ -z "$(tr -d '[:space:]' < "$RUNNER_TEMP/notes.md")" ]; then
+            echo "::warning::CHANGELOG.md has no section for $v; the release notes list the commits instead"
+            echo "args=release --clean" >> "$GITHUB_ENV"
+          else
+            echo "args=release --clean --release-notes $RUNNER_TEMP/notes.md" >> "$GITHUB_ENV"
+          fi
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: ${{ env.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

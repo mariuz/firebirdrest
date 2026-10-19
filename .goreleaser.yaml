@@ -57,6 +57,8 @@ release:
     owner: mariuz
     name: firebirdrest
   prerelease: auto
+  # a release drafted on GitHub first gets these notes instead of its own text
+  mode: replace
   header: |
     Binaries for Linux, macOS, Windows and FreeBSD are attached below. The Docker image is
     `ghcr.io/mariuz/firebirdrest:{{ .Version }}`. See [CHANGELOG.md](https://github.com/mariuz/firebirdrest/blob/{{ .Tag }}/CHANGELOG.md) for details.

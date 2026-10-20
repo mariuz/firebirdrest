@@ -56,6 +56,11 @@ jobs:
             docker exec ${{ job.services.firebird.id }} /opt/firebird/bin/isql \
               -user SYSDBA -password masterkey localhost:/var/lib/firebird/data/test.fdb -i /tmp/bookstore-fb4.sql
           fi
+          case "${{ matrix.firebird }}" in 6*)  # SQL schemas: Firebird 6+
+            docker cp examples/bookstore-fb6.sql ${{ job.services.firebird.id }}:/tmp/bookstore-fb6.sql
+            docker exec ${{ job.services.firebird.id }} /opt/firebird/bin/isql \
+              -user SYSDBA -password masterkey localhost:/var/lib/firebird/data/test.fdb -i /tmp/bookstore-fb6.sql
+          esac
       - name: Vet
         run: go vet ./...
       - name: Test

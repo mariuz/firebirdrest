@@ -31,6 +31,8 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 - **Schema cache reload** on `POST_EVENT 'fbrest_reload'`, `SIGUSR1` or `POST /reload`
 - Works with Firebird **3, 4 and 5** (the integration suite runs against all three), and is tested
   against the Firebird 6 snapshot ahead of its release
+- **SQL schemas** on Firebird 6: expose several with `db-schemas` and pick one per request with
+  `Accept-Profile` / `Content-Profile`, as in PostgREST
 
 ## Install
 
@@ -389,6 +391,7 @@ Settings come from an optional config file (`firebirdrest app.conf`; see
 | `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters or `limit` |
 | `db-aggregates-enabled` | `FBREST_DB_AGGREGATES_ENABLED` | `true` | allow `count()`, `sum()`, … in `select` |
 | `db-plan-enabled` | `FBREST_DB_PLAN_ENABLED` | `false` | allow `Accept: application/vnd.pgrst.plan` (Firebird query plans of a request) |
+| `db-schemas` | `FBREST_DB_SCHEMAS` | `public` | Firebird 6+: SQL schemas to expose (first = default); pick one with `Accept-Profile` / `Content-Profile` |
 | `db-request-context` | `FBREST_DB_REQUEST_CONTEXT` | `auto` | set the `request.*` context variables: `auto` (only when some view, trigger or routine mentions `request.`), `always`, `never` |
 | `db-prepared-statements` | `FBREST_DB_PREPARED_STATEMENTS` | `256` | prepared statements cached per role (0 = off) |
 | `db-prepared-statements-idle` | `FBREST_DB_PREPARED_STATEMENTS_IDLE` | `30` | close cached statements unused for this many seconds (see [DDL notes](docs/benchmarks.md#prepared-statements-and-ddl)) |

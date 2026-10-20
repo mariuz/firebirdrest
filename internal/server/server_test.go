@@ -45,14 +45,23 @@ func testServerWith(t *testing.T, change func(*config.Config)) *httptest.Server 
 	if change != nil {
 		change(cfg)
 	}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s, err := New(context.Background(), cfg, log)
+	ts, err := startServer(t, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return ts
+}
+
+func startServer(t *testing.T, cfg *config.Config) (*httptest.Server, error) {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s, err := New(context.Background(), cfg, log)
+	if err != nil {
+		return nil, err
+	}
 	ts := httptest.NewServer(s)
 	t.Cleanup(func() { ts.Close(); s.Close() })
-	return ts
+	return ts, nil
 }
 
 func token(t *testing.T, claims jwt.MapClaims) string {
@@ -213,7 +222,7 @@ func TestRequestContextDetection(t *testing.T) {
 	}
 	defer s.Close()
 	// whoami() reads request.jwt.claim.sub, so the variables must be set
-	if !s.schema.Load().UsesRequestContext {
+	if !s.catalog.Load().Default().UsesRequestContext {
 		t.Error("the example database reads request.* variables but detection said no")
 	}
 }
@@ -603,7 +612,7 @@ func TestQueryPlans(t *testing.T) {
 		"Accept", "application/vnd.pgrst.plan", "Prefer", "count=exact")
 	if r.status != 200 || !strings.HasPrefix(r.header.Get("Content-Type"), "application/vnd.pgrst.plan+text") ||
 		strings.Count(r.body, "-- statement ") != 3 || strings.Count(r.body, "Select Expression") != 3 ||
-		!strings.Contains(r.body, `FROM "AUTHORS"`) || !strings.Contains(r.body, "SELECT COUNT(*)") {
+		!strings.Contains(r.body, `"AUTHORS" t0`) || !strings.Contains(r.body, "SELECT COUNT(*)") {
 		t.Errorf("text plan: %d %s", r.status, r.body)
 	}
 
@@ -679,5 +688,108 @@ func TestPreferTimezone(t *testing.T) {
 	r = do(t, ts, "GET", "/meetings?select=id&id=eq.1", "", "Prefer", "handling=strict, timezone=Mars/Olympus_Mons")
 	if r.status != 400 || !strings.Contains(r.body, "FBRST130") {
 		t.Errorf("strict unknown zone: %d %s", r.status, r.body)
+	}
+}
+
+func TestSchemas(t *testing.T) {
+	plain := testServer(t)
+	uri := os.Getenv("FBREST_TEST_DB_URI")
+	cfg := &config.Config{DBURI: uri, DBAnonRole: "web_anon", DBPool: 4, DBSafeUpdates: true, DBAggregates: true,
+		DBPreparedStatements: 64, DBRequestContext: "auto", JWTSecret: testSecret, JWTRoleClaim: "role",
+		DBSchemas: []string{"public", "inventory"}}
+	ts, err := startServer(t, cfg)
+	if err != nil {
+		// Firebird 3-5: no schemas
+		if !strings.Contains(err.Error(), "needs Firebird 6") {
+			t.Fatalf("db-schemas before Firebird 6: %v", err)
+		}
+		if r := do(t, plain, "GET", "/books", "", "Accept-Profile", "public"); r.status != 406 || !strings.Contains(r.body, "FBRST106") {
+			t.Errorf("Accept-Profile before Firebird 6: %d %s", r.status, r.body)
+		}
+		t.Skip("schemas need Firebird 6: " + err.Error())
+	}
+	user := "Bearer " + token(t, jwt.MapClaims{"role": "web_user"})
+	inv := "inventory"
+
+	// the default schema is the first one; responses name the schema used
+	r := do(t, ts, "GET", "/books?select=title&id=eq.1", "")
+	jsonEq(t, r.body, `[{"title":"Guards! Guards!"}]`)
+	if cp := r.header.Get("Content-Profile"); cp != "public" {
+		t.Errorf("default Content-Profile %q", cp)
+	}
+	if r = do(t, ts, "GET", "/warehouses", ""); r.status != 404 {
+		t.Errorf("inventory table visible in public: %d", r.status)
+	}
+
+	// Accept-Profile selects the schema of a read; same-named tables stay apart
+	r = do(t, ts, "GET", "/books?select=sku,title", "", "Accept-Profile", inv)
+	jsonEq(t, r.body, `[{"sku":"SKU-1","title":"Guards! Guards! (paperback)"}]`)
+	if cp := r.header.Get("Content-Profile"); cp != inv {
+		t.Errorf("Content-Profile %q", cp)
+	}
+	jsonEq(t, do(t, ts, "GET", "/warehouses?select=name,stock(book_id,qty)&stock.order=book_id&order=id", "", "Accept-Profile", "INVENTORY").body,
+		`[{"name":"Bucharest","stock":[{"book_id":1,"qty":12},{"book_id":2,"qty":3}]},{"name":"Cluj","stock":[{"book_id":1,"qty":0}]}]`)
+	// a foreign key into another schema is not an embeddable relationship
+	if r = do(t, ts, "GET", "/stock?select=qty,books(title)", "", "Accept-Profile", inv); r.status != 400 || !strings.Contains(r.body, "FBRST200") {
+		t.Errorf("cross-schema embed: %d %s", r.status, r.body)
+	}
+	// counts and estimates use the schema's own table
+	r = do(t, ts, "GET", "/stock?select=id&limit=1", "", "Accept-Profile", inv, "Prefer", "count=exact")
+	if cr := r.header.Get("Content-Range"); cr != "0-0/3" {
+		t.Errorf("count in inventory: %q", cr)
+	}
+
+	// routines: selectable procedure and packaged function of the schema
+	jsonEq(t, do(t, ts, "GET", "/rpc/low_stock?below=5", "", "Accept-Profile", inv).body,
+		`[{"warehouse":"Bucharest","book_id":2,"qty":3},{"warehouse":"Cluj","book_id":1,"qty":0}]`)
+	if r = do(t, ts, "GET", "/rpc/reports.total_qty?book_id=1", "", "Accept-Profile", inv); r.body != "12" {
+		t.Errorf("packaged function in inventory: %s", r.body)
+	}
+	if r = do(t, ts, "GET", "/rpc/low_stock?below=5", ""); r.status != 404 {
+		t.Errorf("inventory routine visible in public: %d", r.status)
+	}
+
+	// writes take Content-Profile
+	r = do(t, ts, "POST", "/warehouses?select=name", `{"name":"Iasi"}`, "Authorization", user,
+		"Content-Profile", inv, "Prefer", "return=representation", "Prefer", "tx=rollback")
+	if r.status != 201 {
+		t.Fatalf("insert in inventory: %d %s", r.status, r.body)
+	}
+	jsonEq(t, r.body, `[{"name":"Iasi"}]`)
+	r = do(t, ts, "PATCH", "/stock?id=eq.3&select=qty", `{"qty":7}`, "Authorization", user,
+		"Content-Profile", inv, "Prefer", "return=representation", "Prefer", "tx=rollback")
+	jsonEq(t, r.body, `[{"qty":7}]`)
+	r = do(t, ts, "POST", "/rpc/low_stock?select=qty", `{"below":1}`, "Content-Profile", inv)
+	jsonEq(t, r.body, `[{"qty":0}]`)
+	// Accept-Profile does not apply to writes, nor Content-Profile to reads
+	if r = do(t, ts, "POST", "/warehouses", `{"name":"x"}`, "Authorization", user, "Accept-Profile", inv,
+		"Prefer", "tx=rollback"); r.status != 404 {
+		t.Errorf("POST with Accept-Profile used inventory: %d %s", r.status, r.body)
+	}
+	if r = do(t, ts, "GET", "/warehouses", "", "Content-Profile", inv); r.status != 404 {
+		t.Errorf("GET with Content-Profile used inventory: %d", r.status)
+	}
+
+	// unknown or unexposed schemas
+	for _, name := range []string{"nope", "SYSTEM"} {
+		r = do(t, ts, "GET", "/books", "", "Accept-Profile", name)
+		if r.status != 406 || !strings.Contains(r.body, "FBRST106") || !strings.Contains(r.body, "public, inventory") {
+			t.Errorf("Accept-Profile %s: %d %s", name, r.status, r.body)
+		}
+	}
+
+	// OpenAPI describes the selected schema
+	r = do(t, ts, "GET", "/", "", "Accept-Profile", inv)
+	if !strings.Contains(r.body, `"/warehouses"`) || strings.Contains(r.body, `"/authors"`) {
+		t.Errorf("OpenAPI for inventory: %.300s", r.body)
+	}
+
+	// configuration errors
+	for _, bad := range [][]string{{"nope"}, {"system"}} {
+		c := *cfg
+		c.DBSchemas = bad
+		if _, err := startServer(t, &c); err == nil {
+			t.Errorf("db-schemas %v accepted", bad)
+		}
 	}
 }

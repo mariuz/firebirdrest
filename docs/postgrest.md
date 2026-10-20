@@ -24,7 +24,8 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 
 | Topic | PostgREST | FirebirdREST |
 |---|---|---|
-| Namespaces | exposed schemas, `Accept-Profile` | Firebird has no schemas: one namespace. Packaged routines are `/rpc/package.name` |
+| Namespaces | exposed schemas, `Accept-Profile` | the same on Firebird 6 (`db-schemas`, `Accept-Profile`, `Content-Profile`); Firebird 3–5 have no schemas: one namespace. Packaged routines are `/rpc/package.name` |
+| Relationships across schemas | foreign keys into other exposed schemas | only within the request's schema |
 | Identifier case | as stored | unquoted (upper case) names shown in lower case |
 | Claims in SQL | `current_setting('request.jwt.claims')::json` | `RDB$GET_CONTEXT('USER_TRANSACTION', 'request.jwt.claim.<name>')`, one variable per claim (Firebird has no JSON functions) |
 | Computed fields / relationships | functions taking a table row | routines whose parameters are `TYPE OF COLUMN <table>.<col>` |

@@ -245,7 +245,7 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 			if len(cols) == 0 {
 				return &query.Error{Status: 400, Code: "FBRST102", Message: "upsert requires at least one column"}
 			}
-			b.W("UPDATE OR INSERT INTO ", schema.Quote(rel.DBName), " (", quoteCols(cols), ") VALUES (")
+			b.W("UPDATE OR INSERT INTO ", rel.SQLName(), " (", quoteCols(cols), ") VALUES (")
 			for i, v := range vals {
 				if i > 0 {
 					b.W(", ")
@@ -254,7 +254,7 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 			}
 			b.W(") MATCHING (", quoteCols(conflict), ")")
 		case "ignore-duplicates":
-			b.W("MERGE INTO ", schema.Quote(rel.DBName), " t0 USING RDB$DATABASE ON ")
+			b.W("MERGE INTO ", rel.SQLName(), " t0 USING RDB$DATABASE ON ")
 			for i, c := range conflict {
 				if i > 0 {
 					b.W(" AND ")
@@ -277,9 +277,9 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 			b.W(")")
 		default:
 			if len(cols) == 0 {
-				b.W("INSERT INTO ", schema.Quote(rel.DBName), " DEFAULT VALUES")
+				b.W("INSERT INTO ", rel.SQLName(), " DEFAULT VALUES")
 			} else {
-				b.W("INSERT INTO ", schema.Quote(rel.DBName), " (", quoteCols(cols), ") VALUES (")
+				b.W("INSERT INTO ", rel.SQLName(), " (", quoteCols(cols), ") VALUES (")
 				for i, v := range vals {
 					if i > 0 {
 						b.W(", ")
@@ -437,7 +437,7 @@ func (s *Server) update(rc *reqCtx, rel *schema.Relation) error {
 	affected := 0
 	if len(cols) > 0 && n.Limit != 0 {
 		b := &query.Builder{}
-		b.W("UPDATE ", schema.Quote(rel.DBName), " t0 SET ")
+		b.W("UPDATE ", rel.SQLName(), " t0 SET ")
 		for i, c := range cols {
 			if i > 0 {
 				b.W(", ")
@@ -536,7 +536,7 @@ func (s *Server) put(rc *reqCtx, rel *schema.Relation) error {
 		key = append(key, vals[idx])
 	}
 	b := &query.Builder{}
-	b.W("UPDATE OR INSERT INTO ", schema.Quote(rel.DBName), " (", quoteCols(cols), ") VALUES (")
+	b.W("UPDATE OR INSERT INTO ", rel.SQLName(), " (", quoteCols(cols), ") VALUES (")
 	for i, v := range vals {
 		if i > 0 {
 			b.W(", ")
@@ -585,7 +585,7 @@ func (s *Server) delete(rc *reqCtx, rel *schema.Relation) error {
 	var affected int64
 	if n.Limit != 0 {
 		b := &query.Builder{}
-		b.W("DELETE FROM ", schema.Quote(rel.DBName), " t0")
+		b.W("DELETE FROM ", rel.SQLName(), " t0")
 		if err := writeLimitedTail(b, n); err != nil {
 			return err
 		}

@@ -90,7 +90,8 @@ listed in the [changelog](../changelog.md).
 
 Firebird 6 is not released yet. CI runs the full integration suite against the nightly
 `firebirdsql/firebird:6-snapshot` image on every push and once a week, so problems show up
-before the release. Firebird 6 adds SQL schemas; FirebirdREST serves the `PUBLIC` schema.
+before the release. Firebird 6 adds SQL schemas, which FirebirdREST can expose with `db-schemas`
+(see [Schemas](schemas.md)); by default it serves `PUBLIC`.
 
 Known issue with the current snapshot: text columns declared `CHARACTER SET NONE` (the default
 in a database created without `DEFAULT CHARACTER SET`) fail with *string right truncation*

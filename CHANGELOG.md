@@ -5,6 +5,18 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- SQL schemas (Firebird 6): `db-schemas` lists the schemas to expose, the first being the default
+  (`public` when unset). Requests pick one with `Accept-Profile` (reads) or `Content-Profile`
+  (writes), as in PostgREST; responses carry `Content-Profile`, and unexposed schemas get `406`
+  (`FBRST106`). Each schema has its own cache and OpenAPI description, statements use
+  schema-qualified names, and embedding follows foreign keys within the schema.
+  `examples/bookstore-fb6.sql` adds an `inventory` schema. `db-pre-request` accepts `schema.proc`.
+
+### Fixed
+- On Firebird 6 the schema cache matches system-table rows by schema as well as by name (domains,
+  constraints, indexes, routine parameters), instead of relying on names being unique.
+
 ## [0.1.2] - 2026-10-19
 
 Write guards with `max-affected`, query plans, and per-request time zones.

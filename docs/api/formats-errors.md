@@ -109,6 +109,7 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST103` | `select` syntax, or invalid `Range` |
 | `FBRST104` | unsupported cast |
 | `FBRST105` | `PUT` needs `eq` filters on the whole primary key |
+| `FBRST106` | `Accept-Profile`/`Content-Profile` names a schema that isn't exposed (or the server has no schemas) |
 | `FBRST107` | no acceptable media type |
 | `FBRST108` | a filter or order references an embed that isn't in `select` |
 | `FBRST109` | `PATCH`/`DELETE` without filters or `limit` (`db-safe-updates`) |

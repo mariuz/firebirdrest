@@ -85,7 +85,7 @@ func (b *Builder) WriteFrom(n *ReadNode, alias string) {
 		b.W(n.From)
 		b.Args = append(b.Args, n.FromArgs...)
 	} else {
-		b.W(schema.Quote(n.Rel.DBName))
+		b.W(n.Rel.SQLName())
 	}
 	b.W(" ", alias)
 }
@@ -255,7 +255,7 @@ func (b *Builder) writeExists(parent *ReadNode, palias string, c *ReadNode, nega
 	matchAlias := ca
 	if j.Kind == ManyToMany {
 		ja := b.nextAlias()
-		b.W(" JOIN ", schema.Quote(j.Junction.DBName), " ", ja, " ON ")
+		b.W(" JOIN ", j.Junction.SQLName(), " ", ja, " ON ")
 		for i := range j.JChildCols {
 			if i > 0 {
 				b.W(" AND ")

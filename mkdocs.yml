@@ -52,6 +52,7 @@ nav:
       - Security and roles: references/security.md
       - Configuration: references/configuration.md
       - Schema cache: references/schema-cache.md
+      - Schemas (Firebird 6): references/schemas.md
       - Deployment: references/deployment.md
   - Benchmarks: benchmarks.md
   - Differences from PostgREST: postgrest.md

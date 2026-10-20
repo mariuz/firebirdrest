@@ -26,10 +26,11 @@ jwt-secret = "a long random string of at least 32 characters"
 | `db-anon-role` | `FBREST_DB_ANON_ROLE` | none | role for requests without a JWT; empty means a token is required |
 | `db-pool` | `FBREST_DB_POOL` | `10` | connections per role |
 | `db-max-rows` | `FBREST_DB_MAX_ROWS` | `0` | maximum rows per read (`0` = no limit); also where `Prefer: count=estimated` switches to the estimate (1000 when `0`) |
-| `db-pre-request` | `FBREST_DB_PRE_REQUEST` | none | executable procedure run at the start of each request |
+| `db-pre-request` | `FBREST_DB_PRE_REQUEST` | none | executable procedure run at the start of each request (`proc` or `schema.proc`) |
 | `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters or `limit` |
 | `db-aggregates-enabled` | `FBREST_DB_AGGREGATES_ENABLED` | `true` | allow `count()`, `sum()`, … |
 | `db-plan-enabled` | `FBREST_DB_PLAN_ENABLED` | `false` | allow `Accept: application/vnd.pgrst.plan` ([query plans](../api/formats-errors.md#query-plans)) |
+| `db-schemas` | `FBREST_DB_SCHEMAS` | `public` | Firebird 6+: comma-separated SQL schemas to expose, the first is the default ([schemas](schemas.md)) |
 | `db-request-context` | `FBREST_DB_REQUEST_CONTEXT` | `auto` | when to set `request.*` variables: `auto`, `always`, `never` ([details](security.md#when-the-variables-are-set)) |
 | `db-prepared-statements` | `FBREST_DB_PREPARED_STATEMENTS` | `256` | prepared statements cached per role (`0` = off) |
 | `db-prepared-statements-idle` | `FBREST_DB_PREPARED_STATEMENTS_IDLE` | `30` | seconds after which an unused cached statement is closed ([why](schema-cache.md#ddl-and-cached-statements)) |

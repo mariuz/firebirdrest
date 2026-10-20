@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -33,8 +34,10 @@ type Column struct {
 
 // Relation is a table or a view.
 type Relation struct {
-	Name        string
-	DBName      string
+	Name   string
+	DBName string
+	Schema string // DB name of its SQL schema (Firebird 6+), "" before
+
 	IsView      bool
 	Description string
 	Columns     []*Column
@@ -77,6 +80,7 @@ const (
 type Routine struct {
 	Name        string // "proc", or "pkg.proc" for packaged routines
 	DBName      string
+	Schema      string // DB name of its SQL schema (Firebird 6+), "" before
 	Package     string // DB name of the package, "" when standalone
 	Kind        string
 	Description string
@@ -88,8 +92,11 @@ type Routine struct {
 	ParentCols []string
 }
 
-// Schema is the cached view of the database.
+// Schema is the cached view of one SQL schema of the database (the whole
+// database before Firebird 6, which has no schemas).
 type Schema struct {
+	Name        string               // API name of the schema ("public"), "" before Firebird 6
+	DBName      string               // DB name ("PUBLIC"), "" before Firebird 6
 	Relations   map[string]*Relation // keyed by API name
 	ForeignKeys []*ForeignKey
 	Routines    map[string]*Routine // keyed by API name
@@ -190,10 +197,22 @@ func (s *Schema) RoutineNames() []string {
 	return out
 }
 
-// SQLName is the quoted name used to call the routine.
+// SQLName is the quoted, schema-qualified name used to call the routine.
 func (r *Routine) SQLName() string {
+	name := Quote(r.DBName)
 	if r.Package != "" {
-		return Quote(r.Package) + "." + Quote(r.DBName)
+		name = Quote(r.Package) + "." + name
+	}
+	if r.Schema != "" {
+		name = Quote(r.Schema) + "." + name
+	}
+	return name
+}
+
+// SQLName is the quoted, schema-qualified name of the relation.
+func (r *Relation) SQLName() string {
+	if r.Schema != "" {
+		return Quote(r.Schema) + "." + Quote(r.DBName)
 	}
 	return Quote(r.DBName)
 }
@@ -210,7 +229,7 @@ func routineName(pkg, name string) string {
 // AsRelation exposes the outputs of a selectable procedure as a relation so
 // the read machinery (select, filters, order, paging) can be reused.
 func (r *Routine) AsRelation() *Relation {
-	rel := &Relation{Name: r.Name, DBName: r.DBName, IsView: true, Columns: r.Out}
+	rel := &Relation{Name: r.Name, DBName: r.DBName, Schema: r.Schema, IsView: true, Columns: r.Out}
 	rel.Index()
 	return rel
 }
@@ -237,20 +256,165 @@ func blobText(v any) string {
 	return ""
 }
 
-// Load reads the schema from the database.
-func Load(ctx context.Context, db *sql.DB) (*Schema, error) {
-	s := &Schema{Relations: map[string]*Relation{}, Routines: map[string]*Routine{}}
+// scope adds the conditions that restrict system-table queries to one SQL
+// schema on Firebird 6+. Before Firebird 6 (dbSchema "") it adds nothing.
+type scope struct{ dbSchema string }
 
-	_ = db.QueryRowContext(ctx,
-		`SELECT RDB$GET_CONTEXT('SYSTEM','ENGINE_VERSION') FROM RDB$DATABASE`).Scan(&s.Version)
+// is returns " AND <col> = ?" for the schema column col (with its argument).
+func (sc scope) is(col string) (string, []any) {
+	if sc.dbSchema == "" {
+		return "", nil
+	}
+	return " AND " + col + " = ?", []any{sc.dbSchema}
+}
+
+// same returns " AND a = b" to join two schema columns.
+func (sc scope) same(a, b string) string {
+	if sc.dbSchema == "" {
+		return ""
+	}
+	return " AND " + a + " = " + b
+}
+
+// col selects a schema column, or NULL before Firebird 6.
+func (sc scope) col(c string) string {
+	if sc.dbSchema == "" {
+		return "CAST(NULL AS VARCHAR(63))"
+	}
+	return c
+}
+
+// Load reads the schema from the database: the PUBLIC schema on Firebird 6+,
+// the whole database before.
+func Load(ctx context.Context, db *sql.DB) (*Schema, error) {
+	c, err := LoadCatalog(ctx, db, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.Schemas[0], nil
+}
+
+// Catalog holds the exposed schemas; the first one is the default.
+type Catalog struct {
+	Schemas []*Schema
+	Version string
+}
+
+// Default is the schema used when a request names none.
+func (c *Catalog) Default() *Schema { return c.Schemas[0] }
+
+// Lookup finds an exposed schema by API or DB name (nil if not exposed).
+func (c *Catalog) Lookup(name string) *Schema {
+	for _, s := range c.Schemas {
+		if s.Name == name || s.DBName == name || s.Name == strings.ToLower(name) && s.DBName == strings.ToUpper(name) {
+			return s
+		}
+	}
+	return nil
+}
+
+// Names returns the API names of the exposed schemas, in order.
+func (c *Catalog) Names() []string {
+	out := make([]string, len(c.Schemas))
+	for i, s := range c.Schemas {
+		out[i] = s.Name
+	}
+	return out
+}
+
+// MajorVersion returns the major engine version of "5.0.4" (0 if unknown).
+func MajorVersion(version string) int {
+	major, _, _ := strings.Cut(version, ".")
+	n, _ := strconv.Atoi(major)
+	return n
+}
+
+// LoadCatalog reads the schemas to expose. names are the configured schemas
+// (API or DB names, e.g. "public" or "PUBLIC"); empty means PUBLIC. Before
+// Firebird 6 there are no schemas: names must be empty and the catalog holds
+// the whole database as its only schema.
+func LoadCatalog(ctx context.Context, db *sql.DB, names []string) (*Catalog, error) {
+	c := &Catalog{}
+	if err := db.QueryRowContext(ctx,
+		`SELECT RDB$GET_CONTEXT('SYSTEM','ENGINE_VERSION') FROM RDB$DATABASE`).Scan(&c.Version); err != nil {
+		return nil, fmt.Errorf("reading the engine version: %w", err)
+	}
+	usesCtx := usesRequestContext(ctx, db)
+	if MajorVersion(c.Version) < 6 {
+		if len(names) > 0 {
+			return nil, fmt.Errorf("db-schemas needs Firebird 6 or later; this server is Firebird %s, which has no schemas", c.Version)
+		}
+		s, err := loadSchema(ctx, db, c.Version, "")
+		if err != nil {
+			return nil, err
+		}
+		s.UsesRequestContext = usesCtx
+		c.Schemas = []*Schema{s}
+		return c, nil
+	}
+	if len(names) == 0 {
+		names = []string{"PUBLIC"}
+	}
+	existing := map[string]bool{}
+	rows, err := db.QueryContext(ctx, `SELECT RDB$SCHEMA_NAME FROM RDB$SCHEMAS`)
+	if err != nil {
+		return nil, fmt.Errorf("reading schemas: %w", err)
+	}
+	for rows.Next() {
+		var n sql.NullString
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		existing[trim(n)] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, name := range names {
+		dbName := name
+		if !existing[dbName] && existing[strings.ToUpper(name)] && plainIdent.MatchString(strings.ToUpper(name)) {
+			dbName = strings.ToUpper(name)
+		}
+		if !existing[dbName] {
+			return nil, fmt.Errorf("db-schemas: schema %q does not exist", name)
+		}
+		if dbName == "SYSTEM" {
+			return nil, fmt.Errorf("db-schemas: the SYSTEM schema cannot be exposed")
+		}
+		if seen[dbName] {
+			continue
+		}
+		seen[dbName] = true
+		s, err := loadSchema(ctx, db, c.Version, dbName)
+		if err != nil {
+			return nil, fmt.Errorf("schema %s: %w", dbName, err)
+		}
+		s.UsesRequestContext = usesCtx
+		c.Schemas = append(c.Schemas, s)
+	}
+	return c, nil
+}
+
+// loadSchema reads one schema (dbSchema "" before Firebird 6: everything).
+func loadSchema(ctx context.Context, db *sql.DB, version, dbSchema string) (*Schema, error) {
+	s := &Schema{Relations: map[string]*Relation{}, Routines: map[string]*Routine{},
+		Version: version, DBName: dbSchema}
+	if dbSchema != "" {
+		s.Name = APIName(dbSchema)
+	}
+	sc := scope{dbSchema}
 
 	byDB := map[string]*Relation{}
 
+	cond, args := sc.is("r.RDB$SCHEMA_NAME")
 	rows, err := db.QueryContext(ctx, `
 SELECT r.RDB$RELATION_NAME, r.RDB$VIEW_BLR IS NOT NULL, r.RDB$DESCRIPTION
 FROM RDB$RELATIONS r
 WHERE COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0
-  AND COALESCE(r.RDB$RELATION_TYPE, 0) IN (0, 1, 4, 5)`)
+  AND COALESCE(r.RDB$RELATION_TYPE, 0) IN (0, 1, 4, 5)`+cond, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading relations: %w", err)
 	}
@@ -262,7 +426,7 @@ WHERE COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0
 			rows.Close()
 			return nil, err
 		}
-		rel := &Relation{DBName: trim(name), IsView: isView, Description: blobText(desc)}
+		rel := &Relation{DBName: trim(name), Schema: dbSchema, IsView: isView, Description: blobText(desc)}
 		rel.Name = APIName(rel.DBName)
 		byDB[rel.DBName] = rel
 		s.Relations[rel.Name] = rel
@@ -272,6 +436,7 @@ WHERE COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0
 		return nil, err
 	}
 
+	cond, args = sc.is("rf.RDB$SCHEMA_NAME")
 	rows, err = db.QueryContext(ctx, `
 SELECT rf.RDB$RELATION_NAME, rf.RDB$FIELD_NAME, rf.RDB$FIELD_POSITION,
        f.RDB$FIELD_TYPE, COALESCE(f.RDB$FIELD_SUB_TYPE, 0), COALESCE(f.RDB$FIELD_SCALE, 0),
@@ -282,10 +447,10 @@ SELECT rf.RDB$RELATION_NAME, rf.RDB$FIELD_NAME, rf.RDB$FIELD_POSITION,
        rf.RDB$IDENTITY_TYPE IS NOT NULL,
        f.RDB$COMPUTED_BLR IS NOT NULL
 FROM RDB$RELATION_FIELDS rf
-JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = rf.RDB$FIELD_SOURCE
-JOIN RDB$RELATIONS r ON r.RDB$RELATION_NAME = rf.RDB$RELATION_NAME
-WHERE COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0
-ORDER BY rf.RDB$RELATION_NAME, rf.RDB$FIELD_POSITION`)
+JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = rf.RDB$FIELD_SOURCE`+sc.same("f.RDB$SCHEMA_NAME", "rf.RDB$FIELD_SOURCE_SCHEMA_NAME")+`
+JOIN RDB$RELATIONS r ON r.RDB$RELATION_NAME = rf.RDB$RELATION_NAME`+sc.same("r.RDB$SCHEMA_NAME", "rf.RDB$SCHEMA_NAME")+`
+WHERE COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0`+cond+`
+ORDER BY rf.RDB$RELATION_NAME, rf.RDB$FIELD_POSITION`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading columns: %w", err)
 	}
@@ -317,31 +482,31 @@ ORDER BY rf.RDB$RELATION_NAME, rf.RDB$FIELD_POSITION`)
 		r.Index()
 	}
 
-	if err := loadConstraints(ctx, db, s, byDB); err != nil {
+	if err := loadConstraints(ctx, db, s, byDB, sc); err != nil {
 		return nil, err
 	}
-	if err := loadProcedures(ctx, db, s); err != nil {
+	if err := loadProcedures(ctx, db, s, sc); err != nil {
 		return nil, err
 	}
-	if err := loadFunctions(ctx, db, s); err != nil {
+	if err := loadFunctions(ctx, db, s, sc); err != nil {
 		return nil, err
 	}
 	linkComputed(s, byDB)
-	s.UsesRequestContext = usesRequestContext(ctx, db)
 	return s, nil
 }
 
 // RDB$CONSTRAINT_TYPE is cast to VARCHAR because Firebird 6 truncates that
 // CHARACTER SET NONE column for UTF8 clients ("string right truncation").
-func loadConstraints(ctx context.Context, db *sql.DB, s *Schema, byDB map[string]*Relation) error {
+func loadConstraints(ctx context.Context, db *sql.DB, s *Schema, byDB map[string]*Relation, sc scope) error {
+	cond, args := sc.is("rc.RDB$SCHEMA_NAME")
 	rows, err := db.QueryContext(ctx, `
 SELECT rc.RDB$RELATION_NAME, rc.RDB$CONSTRAINT_NAME, CAST(rc.RDB$CONSTRAINT_TYPE AS VARCHAR(20)),
-       seg.RDB$FIELD_NAME, refc.RDB$CONST_NAME_UQ
+       seg.RDB$FIELD_NAME, refc.RDB$CONST_NAME_UQ, `+sc.col("refc.RDB$CONST_SCHEMA_NAME_UQ")+`
 FROM RDB$RELATION_CONSTRAINTS rc
-JOIN RDB$INDEX_SEGMENTS seg ON seg.RDB$INDEX_NAME = rc.RDB$INDEX_NAME
-LEFT JOIN RDB$REF_CONSTRAINTS refc ON refc.RDB$CONSTRAINT_NAME = rc.RDB$CONSTRAINT_NAME
-WHERE rc.RDB$CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')
-ORDER BY rc.RDB$CONSTRAINT_NAME, seg.RDB$FIELD_POSITION`)
+JOIN RDB$INDEX_SEGMENTS seg ON seg.RDB$INDEX_NAME = rc.RDB$INDEX_NAME`+sc.same("seg.RDB$SCHEMA_NAME", "rc.RDB$SCHEMA_NAME")+`
+LEFT JOIN RDB$REF_CONSTRAINTS refc ON refc.RDB$CONSTRAINT_NAME = rc.RDB$CONSTRAINT_NAME`+sc.same("refc.RDB$SCHEMA_NAME", "rc.RDB$SCHEMA_NAME")+`
+WHERE rc.RDB$CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')`+cond+`
+ORDER BY rc.RDB$CONSTRAINT_NAME, seg.RDB$FIELD_POSITION`, args...)
 	if err != nil {
 		return fmt.Errorf("reading constraints: %w", err)
 	}
@@ -352,8 +517,8 @@ ORDER BY rc.RDB$CONSTRAINT_NAME, seg.RDB$FIELD_POSITION`)
 	var order []string
 	all := map[string]*cons{}
 	for rows.Next() {
-		var rel, name, typ, col, ref sql.NullString
-		if err := rows.Scan(&rel, &name, &typ, &col, &ref); err != nil {
+		var rel, name, typ, col, ref, refSchema sql.NullString
+		if err := rows.Scan(&rel, &name, &typ, &col, &ref, &refSchema); err != nil {
 			rows.Close()
 			return err
 		}
@@ -361,6 +526,9 @@ ORDER BY rc.RDB$CONSTRAINT_NAME, seg.RDB$FIELD_POSITION`)
 		c := all[n]
 		if c == nil {
 			c = &cons{rel: trim(rel), name: n, typ: trim(typ), refName: trim(ref)}
+			if refSchema.Valid && trim(refSchema) != sc.dbSchema {
+				c.refName = "" // references another schema: not embeddable from this one
+			}
 			all[n] = c
 			order = append(order, n)
 		}
@@ -396,11 +564,12 @@ ORDER BY rc.RDB$CONSTRAINT_NAME, seg.RDB$FIELD_POSITION`)
 	return nil
 }
 
-func loadProcedures(ctx context.Context, db *sql.DB, s *Schema) error {
+func loadProcedures(ctx context.Context, db *sql.DB, s *Schema, sc scope) error {
+	cond, args := sc.is("p.RDB$SCHEMA_NAME")
 	rows, err := db.QueryContext(ctx, `
 SELECT p.RDB$PACKAGE_NAME, p.RDB$PROCEDURE_NAME, COALESCE(p.RDB$PROCEDURE_TYPE, 2), p.RDB$DESCRIPTION
 FROM RDB$PROCEDURES p
-WHERE COALESCE(p.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(p.RDB$PRIVATE_FLAG, 0) = 0`)
+WHERE COALESCE(p.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(p.RDB$PRIVATE_FLAG, 0) = 0`+cond, args...)
 	if err != nil {
 		return fmt.Errorf("reading procedures: %w", err)
 	}
@@ -413,7 +582,7 @@ WHERE COALESCE(p.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(p.RDB$PRIVATE_FLAG, 0) = 0
 			rows.Close()
 			return err
 		}
-		r := &Routine{DBName: trim(name), Package: trim(pkg), Kind: Executable, Description: blobText(desc)}
+		r := &Routine{DBName: trim(name), Schema: sc.dbSchema, Package: trim(pkg), Kind: Executable, Description: blobText(desc)}
 		if typ == 1 {
 			r.Kind = Selectable
 		}
@@ -426,25 +595,27 @@ WHERE COALESCE(p.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(p.RDB$PRIVATE_FLAG, 0) = 0
 		return err
 	}
 
+	cond, args = sc.is("pp.RDB$SCHEMA_NAME")
 	rows, err = db.QueryContext(ctx, `
 SELECT pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_NAME, pp.RDB$PARAMETER_TYPE, pp.RDB$PARAMETER_NUMBER,
        f.RDB$FIELD_TYPE, COALESCE(f.RDB$FIELD_SUB_TYPE, 0), COALESCE(f.RDB$FIELD_SCALE, 0),
        COALESCE(f.RDB$FIELD_LENGTH, 0), COALESCE(f.RDB$CHARACTER_LENGTH, 0),
        COALESCE(f.RDB$FIELD_PRECISION, 0),
        pp.RDB$DEFAULT_SOURCE IS NOT NULL OR f.RDB$DEFAULT_SOURCE IS NOT NULL,
-       pp.RDB$RELATION_NAME, pp.RDB$FIELD_NAME
+       pp.RDB$RELATION_NAME, pp.RDB$FIELD_NAME, `+sc.col("pp.RDB$RELATION_SCHEMA_NAME")+`
 FROM RDB$PROCEDURE_PARAMETERS pp
-JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = pp.RDB$FIELD_SOURCE
-ORDER BY pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.RDB$PARAMETER_NUMBER`)
+JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = pp.RDB$FIELD_SOURCE`+sc.same("f.RDB$SCHEMA_NAME", "pp.RDB$FIELD_SOURCE_SCHEMA_NAME")+`
+WHERE 1 = 1`+cond+`
+ORDER BY pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.RDB$PARAMETER_NUMBER`, args...)
 	if err != nil {
 		return fmt.Errorf("reading procedure parameters: %w", err)
 	}
 	for rows.Next() {
-		var pkg, proc, name, srcRel, srcCol sql.NullString
+		var pkg, proc, name, srcRel, srcCol, srcSchema sql.NullString
 		var ptype, num int
 		c := &Column{Nullable: true}
 		if err := rows.Scan(&pkg, &proc, &name, &ptype, &num, &c.FieldType, &c.SubType, &c.Scale,
-			&c.Length, &c.CharLength, &c.Precision, &c.HasDefault, &srcRel, &srcCol); err != nil {
+			&c.Length, &c.CharLength, &c.Precision, &c.HasDefault, &srcRel, &srcCol, &srcSchema); err != nil {
 			rows.Close()
 			return err
 		}
@@ -455,7 +626,9 @@ ORDER BY pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.R
 		c.DBName = trim(name)
 		c.Name = APIName(c.DBName)
 		c.Position = num
-		c.SourceRel, c.SourceCol = trim(srcRel), trim(srcCol)
+		if !srcSchema.Valid || trim(srcSchema) == sc.dbSchema { // TYPE OF COLUMN in this schema
+			c.SourceRel, c.SourceCol = trim(srcRel), trim(srcCol)
+		}
 		if ptype == 0 {
 			r.In = append(r.In, c)
 		} else {
@@ -469,12 +642,13 @@ ORDER BY pp.RDB$PACKAGE_NAME, pp.RDB$PROCEDURE_NAME, pp.RDB$PARAMETER_TYPE, pp.R
 	return nil
 }
 
-func loadFunctions(ctx context.Context, db *sql.DB, s *Schema) error {
+func loadFunctions(ctx context.Context, db *sql.DB, s *Schema, sc scope) error {
+	cond, args := sc.is("fn.RDB$SCHEMA_NAME")
 	rows, err := db.QueryContext(ctx, `
 SELECT fn.RDB$PACKAGE_NAME, fn.RDB$FUNCTION_NAME, COALESCE(fn.RDB$RETURN_ARGUMENT, 0), fn.RDB$DESCRIPTION
 FROM RDB$FUNCTIONS fn
 WHERE COALESCE(fn.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(fn.RDB$PRIVATE_FLAG, 0) = 0
-  AND fn.RDB$MODULE_NAME IS NULL`)
+  AND fn.RDB$MODULE_NAME IS NULL`+cond, args...)
 	if err != nil {
 		// Firebird 2.5 has no PSQL functions; ignore.
 		return nil
@@ -489,7 +663,7 @@ WHERE COALESCE(fn.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(fn.RDB$PRIVATE_FLAG, 0) =
 			rows.Close()
 			return err
 		}
-		r := &Routine{DBName: trim(name), Package: trim(pkg), Kind: Function, Description: blobText(desc)}
+		r := &Routine{DBName: trim(name), Schema: sc.dbSchema, Package: trim(pkg), Kind: Function, Description: blobText(desc)}
 		r.Name = routineName(r.Package, r.DBName)
 		if _, clash := s.Routines[r.Name]; clash {
 			continue
@@ -504,6 +678,7 @@ WHERE COALESCE(fn.RDB$SYSTEM_FLAG, 0) = 0 AND COALESCE(fn.RDB$PRIVATE_FLAG, 0) =
 		return err
 	}
 
+	cond, args = sc.is("a.RDB$SCHEMA_NAME")
 	rows, err = db.QueryContext(ctx, `
 SELECT a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_NAME, a.RDB$ARGUMENT_POSITION,
        COALESCE(f.RDB$FIELD_TYPE, a.RDB$FIELD_TYPE), COALESCE(f.RDB$FIELD_SUB_TYPE, a.RDB$FIELD_SUB_TYPE, 0),
@@ -512,20 +687,21 @@ SELECT a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_NAME, a.RDB$ARGUM
        COALESCE(f.RDB$CHARACTER_LENGTH, a.RDB$CHARACTER_LENGTH, 0),
        COALESCE(f.RDB$FIELD_PRECISION, a.RDB$FIELD_PRECISION, 0),
        a.RDB$DEFAULT_SOURCE IS NOT NULL,
-       a.RDB$RELATION_NAME, a.RDB$FIELD_NAME
+       a.RDB$RELATION_NAME, a.RDB$FIELD_NAME, `+sc.col("a.RDB$RELATION_SCHEMA_NAME")+`
 FROM RDB$FUNCTION_ARGUMENTS a
-LEFT JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = a.RDB$FIELD_SOURCE
-ORDER BY a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_POSITION`)
+LEFT JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = a.RDB$FIELD_SOURCE`+sc.same("f.RDB$SCHEMA_NAME", "a.RDB$FIELD_SOURCE_SCHEMA_NAME")+`
+WHERE 1 = 1`+cond+`
+ORDER BY a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_POSITION`, args...)
 	if err != nil {
 		return fmt.Errorf("reading function arguments: %w", err)
 	}
 	for rows.Next() {
-		var pkg, fn, name, srcRel, srcCol sql.NullString
+		var pkg, fn, name, srcRel, srcCol, srcSchema sql.NullString
 		var pos int
 		var ft sql.NullInt64
 		c := &Column{Nullable: true}
 		if err := rows.Scan(&pkg, &fn, &name, &pos, &ft, &c.SubType, &c.Scale, &c.Length,
-			&c.CharLength, &c.Precision, &c.HasDefault, &srcRel, &srcCol); err != nil {
+			&c.CharLength, &c.Precision, &c.HasDefault, &srcRel, &srcCol, &srcSchema); err != nil {
 			rows.Close()
 			return err
 		}
@@ -537,7 +713,9 @@ ORDER BY a.RDB$PACKAGE_NAME, a.RDB$FUNCTION_NAME, a.RDB$ARGUMENT_POSITION`)
 		c.FieldType = int(ft.Int64)
 		c.DBName = trim(name)
 		c.Position = pos
-		c.SourceRel, c.SourceCol = trim(srcRel), trim(srcCol)
+		if !srcSchema.Valid || trim(srcSchema) == sc.dbSchema {
+			c.SourceRel, c.SourceCol = trim(srcRel), trim(srcCol)
+		}
 		if pos == retPos[k] {
 			c.Name, c.DBName = APIName(r.DBName), "RESULT"
 			r.Out = []*Column{c}

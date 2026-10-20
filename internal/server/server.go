@@ -26,10 +26,10 @@ import (
 
 // Server serves the REST API for one Firebird database.
 type Server struct {
-	cfg    *config.Config
-	base   *sql.DB // connection without a role, used to read the schema
-	schema atomic.Pointer[schema.Schema]
-	log    *slog.Logger
+	cfg     *config.Config
+	base    *sql.DB // connection without a role, used to read the schema
+	catalog atomic.Pointer[schema.Catalog]
+	log     *slog.Logger
 
 	mu    sync.Mutex
 	pools map[string]*rolePool
@@ -68,11 +68,11 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 // Reload re-reads the schema cache.
 func (s *Server) Reload(ctx context.Context) error {
 	start := time.Now()
-	sc, err := schema.Load(ctx, s.base)
+	cat, err := schema.LoadCatalog(ctx, s.base, s.cfg.DBSchemas)
 	if err != nil {
 		return fmt.Errorf("loading schema: %w", err)
 	}
-	s.schema.Store(sc)
+	s.catalog.Store(cat)
 	// cached statements may refer to objects that were just altered
 	s.mu.Lock()
 	for _, rp := range append(s.poolList(), s.basep) {
@@ -81,10 +81,12 @@ func (s *Server) Reload(ctx context.Context) error {
 		}
 	}
 	s.mu.Unlock()
-	s.log.Info("schema cache loaded", "firebird", sc.Version, "relations", len(sc.Relations),
-		"routines", len(sc.Routines), "foreign_keys", len(sc.ForeignKeys),
-		"request_context", s.cfg.DBRequestContext == "always" || s.cfg.DBRequestContext != "never" && sc.UsesRequestContext,
-		"took", time.Since(start).Round(time.Millisecond))
+	for _, sc := range cat.Schemas {
+		s.log.Info("schema cache loaded", "firebird", cat.Version, "schema", sc.Name, "relations", len(sc.Relations),
+			"routines", len(sc.Routines), "foreign_keys", len(sc.ForeignKeys),
+			"request_context", s.cfg.DBRequestContext == "always" || s.cfg.DBRequestContext != "never" && sc.UsesRequestContext,
+			"took", time.Since(start).Round(time.Millisecond))
+	}
 	return nil
 }
 
@@ -226,16 +228,23 @@ func (s *Server) cors(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Access-Control-Allow-Origin", origin)
 	h.Set("Access-Control-Allow-Credentials", "true")
-	h.Set("Access-Control-Expose-Headers", "Content-Encoding, Content-Location, Content-Range, Content-Type, Date, Location, Server, Transfer-Encoding, Range-Unit, Preference-Applied")
+	h.Set("Access-Control-Expose-Headers", "Content-Encoding, Content-Location, Content-Range, Content-Type, Date, Location, Server, Transfer-Encoding, Range-Unit, Preference-Applied, Content-Profile")
 	if r.Method == http.MethodOptions {
 		h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS, HEAD")
-		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Accept-Language, Content-Language, Prefer, Range")
+		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Accept-Language, Content-Language, Prefer, Range, Accept-Profile, Content-Profile")
 		h.Set("Access-Control-Max-Age", "86400")
 	}
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
-	sc := s.schema.Load()
+	cat := s.catalog.Load()
+	sc, err := pickSchema(cat, r)
+	if err != nil {
+		return err
+	}
+	if len(cat.Schemas) > 1 {
+		w.Header().Set("Content-Profile", sc.Name)
+	}
 	path := strings.Trim(r.URL.Path, "/")
 	parts := strings.Split(path, "/")
 	for i := range parts {
@@ -272,7 +281,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	err := s.route(rc, parts)
+	err = s.route(rc, parts)
 	if err == nil && rc.plan != nil {
 		return rc.plan.write(w)
 	}
@@ -422,7 +431,7 @@ func (s *Server) setContext(rc *reqCtx) error {
 		fmt.Fprintf(&sb, "r = RDB$SET_CONTEXT('USER_TRANSACTION', :k%d, :v%d); ", i, i)
 	}
 	if pre != "" {
-		sb.WriteString("EXECUTE PROCEDURE " + schema.Quote(strings.ToUpper(pre)) + "; ")
+		sb.WriteString("EXECUTE PROCEDURE " + quoteDotted(pre) + "; ")
 	}
 	sb.WriteString("END")
 	_, err := rc.tx.ExecContext(rc.r.Context(), sb.String(), args...)
@@ -486,4 +495,42 @@ func hasTimeZones(version string) bool {
 	major, _, _ := strings.Cut(version, ".")
 	n, err := strconv.Atoi(major)
 	return err == nil && n >= 4
+}
+
+// quoteDotted quotes a possibly schema-qualified name such as
+// "inventory.check_request": each part is upper-cased (an unquoted
+// identifier) and quoted.
+func quoteDotted(name string) string {
+	parts := strings.Split(name, ".")
+	for i, p := range parts {
+		parts[i] = schema.Quote(strings.ToUpper(strings.TrimSpace(p)))
+	}
+	return strings.Join(parts, ".")
+}
+
+// pickSchema returns the schema a request asks for: Accept-Profile for GET
+// and HEAD, Content-Profile for the other methods (as in PostgREST), or the
+// first exposed schema.
+func pickSchema(cat *schema.Catalog, r *http.Request) (*schema.Schema, error) {
+	header := "Content-Profile"
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		header = "Accept-Profile"
+	}
+	name := strings.TrimSpace(r.Header.Get(header))
+	if name == "" {
+		return cat.Default(), nil
+	}
+	if cat.Default().Name == "" {
+		return nil, &query.Error{Status: 406, Code: "FBRST106",
+			Message: fmt.Sprintf("%s is not supported: Firebird %s has no schemas", header, cat.Version),
+			Hint:    "schemas need Firebird 6 or later"}
+	}
+	sc := cat.Lookup(name)
+	if sc == nil {
+		return nil, &query.Error{Status: 406, Code: "FBRST106",
+			Message: "the schema must be one of the following: " + strings.Join(cat.Names(), ", "),
+			Details: fmt.Sprintf("%s: %s", header, name),
+			Hint:    "expose more schemas with db-schemas"}
+	}
+	return sc, nil
 }

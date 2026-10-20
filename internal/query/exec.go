@@ -193,9 +193,15 @@ func EstimateRows(ctx context.Context, q Querier, rel *schema.Relation) (est int
 	if rel.IsView {
 		return 0, false, nil
 	}
-	rows, err := q.QueryContext(ctx, `SELECT MIN(i.RDB$STATISTICS) FROM RDB$INDICES i
+	sqlText := `SELECT MIN(i.RDB$STATISTICS) FROM RDB$INDICES i
 WHERE i.RDB$RELATION_NAME = ? AND i.RDB$UNIQUE_FLAG = 1
-  AND COALESCE(i.RDB$INDEX_INACTIVE, 0) = 0 AND i.RDB$STATISTICS > 0`, rel.DBName)
+  AND COALESCE(i.RDB$INDEX_INACTIVE, 0) = 0 AND i.RDB$STATISTICS > 0`
+	args := []any{rel.DBName}
+	if rel.Schema != "" {
+		sqlText += " AND i.RDB$SCHEMA_NAME = ?"
+		args = append(args, rel.Schema)
+	}
+	rows, err := q.QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return 0, false, err
 	}
@@ -304,7 +310,7 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		for i, mc := range matchCols {
 			kcols[i] = col("k", mc)
 		}
-		b.W("(SELECT DISTINCT ", strings.Join(kcols, ", "), " FROM ", schema.Quote(rt.Parent.DBName), " k WHERE ")
+		b.W("(SELECT DISTINCT ", strings.Join(kcols, ", "), " FROM ", rt.Parent.SQLName(), " k WHERE ")
 		b.WriteKeyMatch("k", matchCols, keys)
 		b.W(") k CROSS JOIN ", callExpr(rt, "k"), " ", alias)
 		keys = nil // already applied
@@ -313,7 +319,7 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 	}
 	if matchAlias == "j0" {
 		j := n.Join
-		b.W(" JOIN ", schema.Quote(j.Junction.DBName), " j0 ON ")
+		b.W(" JOIN ", j.Junction.SQLName(), " j0 ON ")
 		for i := range j.JChildCols {
 			if i > 0 {
 				b.W(" AND ")

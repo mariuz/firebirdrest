@@ -5,9 +5,16 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-20
+
+SQL schemas for Firebird 6, chosen per request with `Accept-Profile` and `Content-Profile`.
+Schema support is **experimental**: it is tested against the Firebird 6 snapshot and may change
+if Firebird 6 changes before its release. Existing setups keep working as before: Firebird 3-5
+are unaffected, and Firebird 6 without `db-schemas` serves `PUBLIC` as it did.
+
 ### Added
-- SQL schemas (Firebird 6): `db-schemas` lists the schemas to expose, the first being the default
-  (`public` when unset). Requests pick one with `Accept-Profile` (reads) or `Content-Profile`
+- SQL schemas (Firebird 6, experimental): `db-schemas` lists the schemas to expose, the first
+  being the default (`public` when unset). Requests pick one with `Accept-Profile` (reads) or `Content-Profile`
   (writes), as in PostgREST; responses carry `Content-Profile`, and unexposed schemas get `406`
   (`FBRST106`). Each schema has its own cache and OpenAPI description, statements use
   schema-qualified names, and embedding follows foreign keys within the schema.
@@ -130,7 +137,8 @@ First release. Supports Firebird 3, 4 and 5.
 - `admin-pprof` serves Go profiling endpoints on the admin port.
 - Release workflow can be started from GitHub (Actions, then Release, then Run workflow).
 
-[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mariuz/firebirdrest/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/mariuz/firebirdrest/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/mariuz/firebirdrest/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mariuz/firebirdrest/releases/tag/v0.1.0

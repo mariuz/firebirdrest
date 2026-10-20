@@ -30,7 +30,7 @@ jwt-secret = "a long random string of at least 32 characters"
 | `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters or `limit` |
 | `db-aggregates-enabled` | `FBREST_DB_AGGREGATES_ENABLED` | `true` | allow `count()`, `sum()`, … |
 | `db-plan-enabled` | `FBREST_DB_PLAN_ENABLED` | `false` | allow `Accept: application/vnd.pgrst.plan` ([query plans](../api/formats-errors.md#query-plans)) |
-| `db-schemas` | `FBREST_DB_SCHEMAS` | `public` | Firebird 6+: comma-separated SQL schemas to expose, the first is the default ([schemas](schemas.md)) |
+| `db-schemas` | `FBREST_DB_SCHEMAS` | `public` | Firebird 6+, experimental: comma-separated SQL schemas to expose, the first is the default ([schemas](schemas.md)) |
 | `db-request-context` | `FBREST_DB_REQUEST_CONTEXT` | `auto` | when to set `request.*` variables: `auto`, `always`, `never` ([details](security.md#when-the-variables-are-set)) |
 | `db-prepared-statements` | `FBREST_DB_PREPARED_STATEMENTS` | `256` | prepared statements cached per role (`0` = off) |
 | `db-prepared-statements-idle` | `FBREST_DB_PREPARED_STATEMENTS_IDLE` | `30` | seconds after which an unused cached statement is closed ([why](schema-cache.md#ddl-and-cached-statements)) |

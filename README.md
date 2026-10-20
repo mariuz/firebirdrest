@@ -31,7 +31,7 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 - **Schema cache reload** on `POST_EVENT 'fbrest_reload'`, `SIGUSR1` or `POST /reload`
 - Works with Firebird **3, 4 and 5** (the integration suite runs against all three), and is tested
   against the Firebird 6 snapshot ahead of its release
-- **SQL schemas** on Firebird 6: expose several with `db-schemas` and pick one per request with
+- **SQL schemas** on Firebird 6 (experimental): expose several with `db-schemas` and pick one per request with
   `Accept-Profile` / `Content-Profile`, as in PostgREST
 
 ## Install
@@ -45,7 +45,7 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 
 ```sh
 # example: Linux x86-64 (pick your version and platform from the releases page)
-curl -L https://github.com/mariuz/firebirdrest/releases/download/v0.1.2/firebirdrest_0.1.2_linux_amd64.tar.gz | tar xz
+curl -L https://github.com/mariuz/firebirdrest/releases/download/v0.2.0/firebirdrest_0.2.0_linux_amd64.tar.gz | tar xz
 ./firebirdrest --version
 ```
 

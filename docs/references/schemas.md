@@ -1,5 +1,10 @@
 # Schemas
 
+!!! warning "Experimental"
+    Schema support is built and tested against the Firebird 6 snapshot, before Firebird 6 is
+    released. The configuration and headers follow PostgREST and are expected to stay, but
+    details may change if Firebird 6 changes before its release.
+
 Firebird 6 adds SQL schemas: named namespaces for tables, views, procedures, functions and
 packages, like PostgreSQL's. FirebirdREST can expose several of them and lets each request pick
 one, with the same headers as PostgREST.

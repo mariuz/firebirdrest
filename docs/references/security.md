@@ -41,12 +41,49 @@ used.
 
 ## JSON Web Tokens
 
-Send `Authorization: Bearer <token>`. The token is verified with `jwt-secret`:
+Send `Authorization: Bearer <token>`. The token is verified with the keys of `jwt-secret`,
+`jwt-jwks-url`, or both:
 
 | `jwt-secret` | Algorithms |
 |---|---|
 | a string (32+ characters recommended) | `HS256`, `HS384`, `HS512` |
-| a PEM public key (`-----BEGIN PUBLIC KEY-----...`) | `RS256/384/512` (RSA) or `ES256/384/512` (ECDSA) |
+| the same, base64 encoded, with `jwt-secret-is-base64 = true` | `HS256`, `HS384`, `HS512` |
+| a PEM public key or certificate (`-----BEGIN PUBLIC KEY-----`, `-----BEGIN RSA PUBLIC KEY-----` or `-----BEGIN CERTIFICATE-----`); several blocks give several keys | RSA: `RS256/384/512`, `PS256/384/512`; ECDSA: `ES256/384/512`; Ed25519: `EdDSA` |
+| a JWK (`{"kty": "RSA", ...}`) or a JWKS (`{"keys": [...]}`) as JSON | as for PEM, plus `HS*` for `"kty": "oct"` keys |
+| `@/path/to/file`: any of the above, read from the file at startup | |
+
+A key only verifies tokens of its own type: an RSA key never accepts an `HS256` token, so a
+public key can't be misused as an HMAC secret. A JWK with `alg` accepts only that algorithm, and
+JWKS entries with `"use": "enc"` are ignored. When the token names a key with `kid`, only keys
+with that `kid` (or without one) are tried; otherwise every key of the right type is.
+
+!!! note "Secret files"
+    An `@file` HMAC secret is used byte for byte, including a trailing newline if the file has
+    one. Write it with `printf '%s' "$SECRET" > file`, or use base64 and `jwt-secret-is-base64`.
+
+### Keys from an identity provider
+
+Identity providers such as Auth0, Keycloak, Okta, Azure AD or Google publish their signing keys
+as a JWKS at a URL, and rotate them. Point `jwt-jwks-url` at it:
+
+```ini
+jwt-jwks-url = "https://example.eu.auth0.com/.well-known/jwks.json"
+jwt-aud = "https://api.example.com"
+jwt-role-claim-key = "https://example.com/role"
+```
+
+FirebirdREST fetches the URL at startup and every `jwt-jwks-refresh` seconds (default 3600).
+A token whose `kid` isn't known yet triggers an extra fetch, at most once every 30 seconds, so a
+newly rotated key works right away. If a fetch fails the previous keys stay in use; if the
+first fetch fails, FirebirdREST starts anyway (anonymous requests keep working) and retries every
+30 seconds. A key that disappears from the JWKS stops working as soon as the change is fetched.
+
+### Validation cache
+
+Checking an RSA or ECDSA signature costs far more than the rest of the authentication, so
+accepted tokens are remembered: up to `jwt-cache-max-entries` tokens (default 1000; 0 turns the
+cache off), each until its `exp` or for 5 minutes, whichever is sooner. The cache is emptied when
+the JWKS keys change and when the schema cache reloads. Rejected tokens are never cached.
 
 `exp` and `nbf` are checked when present. With `jwt-aud` set, the `aud` claim must match.
 
@@ -65,7 +102,8 @@ A valid token without a role claim uses `db-anon-role`. Role names must be plain
 | no token and no `db-anon-role` | `401 FBRST302` |
 | malformed, badly signed, expired or wrong audience | `401 FBRST301` |
 | role not granted to the authenticator | `403 FBRST300` |
-| token sent but no `jwt-secret` configured | `500 FBRST300` |
+| token sent but neither `jwt-secret` nor `jwt-jwks-url` configured | `500 FBRST300` |
+| no key for the token's algorithm or `kid` | `401 FBRST301` |
 
 ## Request context in PSQL
 

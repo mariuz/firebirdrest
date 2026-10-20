@@ -196,6 +196,7 @@ func negotiate(r *http.Request, allowed ...string) (string, error) {
 
 // writeRows writes a result set in the negotiated format.
 func writeRows(rc *reqCtx, status int, rows []*query.Obj) error {
+	defer since(&rc.timing.response, time.Now())
 	mt, err := negotiate(rc.r, mimeJSON, mimeObject, mimeCSV)
 	if err != nil {
 		return err

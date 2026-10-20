@@ -53,15 +53,21 @@ func testServerWith(t *testing.T, change func(*config.Config)) *httptest.Server 
 }
 
 func startServer(t *testing.T, cfg *config.Config) (*httptest.Server, error) {
+	ts, _, err := startServerS(t, cfg)
+	return ts, err
+}
+
+// startServerS also returns the Server, for its metrics.
+func startServerS(t *testing.T, cfg *config.Config) (*httptest.Server, *Server, error) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s, err := New(context.Background(), cfg, log)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ts := httptest.NewServer(s)
 	t.Cleanup(func() { ts.Close(); s.Close() })
-	return ts, nil
+	return ts, s, nil
 }
 
 func token(t *testing.T, claims jwt.MapClaims) string {

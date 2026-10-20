@@ -5,6 +5,30 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- Metrics in the Prometheus format at `GET /metrics` on the admin port: requests by method and
+  status, a request duration histogram, error codes, connection pool and statement cache usage
+  per role, schema cache loads, JWT cache and JWKS fetches, and Go runtime figures. See
+  [Monitoring](https://mariuz.github.io/firebirdrest/references/observability/).
+- `server-timing-enabled` adds a `Server-Timing` header (`jwt`, `parse`, `transaction`,
+  `response`), as in PostgREST.
+- `jwt-secret` accepts a JWK or a JWKS as JSON, PEM certificates and PKCS#1 RSA keys, several PEM
+  keys at once, Ed25519 keys (`EdDSA`) and `@/path/to/file`; `PS256/384/512` tokens are accepted
+  with RSA keys. Tokens with a `kid` are checked against the matching key.
+- `jwt-secret-is-base64` for base64 encoded HMAC secrets.
+- `jwt-jwks-url` fetches the signing keys of an identity provider (Auth0, Keycloak, Okta, Azure
+  AD, ...) at startup and every `jwt-jwks-refresh` seconds, and again when a token names an
+  unknown `kid`, so rotated keys work right away.
+- A JWT validation cache (`jwt-cache-max-entries`, default 1000) skips the signature check for
+  tokens already accepted, until they expire or for 5 minutes.
+
+### Fixed
+- Responses are sent only after the transaction commits. A failed `COMMIT` now returns an error
+  instead of a success response, and headers set before an error (such as `Content-Range` on a
+  `416`) no longer appear on the error response.
+- Graceful shutdown waits for requests in flight (up to 10 seconds) before closing the database
+  connections; before, requests running at `SIGTERM` could fail with `500`.
+
 ## [0.2.0] - 2026-10-20
 
 SQL schemas for Firebird 6, chosen per request with `Accept-Profile` and `Content-Profile`.

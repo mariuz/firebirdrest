@@ -1,8 +1,6 @@
 package server
 
 import (
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,25 +25,23 @@ func (s *Server) authenticate(rc *reqCtx) error {
 	if !ok || !strings.EqualFold(scheme, "bearer") || strings.TrimSpace(token) == "" {
 		return jwtError("expected Authorization: Bearer <token>")
 	}
-	if s.cfg.JWTSecret == "" {
-		return &query.Error{Status: 500, Code: "FBRST300", Message: "server lacks JWT secret"}
+	if !s.jwt.enabled() {
+		return &query.Error{Status: 500, Code: "FBRST300", Message: "server lacks JWT secret",
+			Hint: "set jwt-secret or jwt-jwks-url"}
 	}
-	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512"})}
-	if s.cfg.JWTAudience != "" {
-		opts = append(opts, jwt.WithAudience(s.cfg.JWTAudience))
-	}
-	claims := jwt.MapClaims{}
-	_, err := jwt.ParseWithClaims(strings.TrimSpace(token), claims, s.jwtKey, opts...)
+	claims, err := s.jwt.verify(strings.TrimSpace(token))
 	if err != nil {
 		switch {
 		case errors.Is(err, jwt.ErrTokenExpired):
 			return jwtError("JWT expired")
+		case errors.Is(err, jwt.ErrTokenNotValidYet):
+			return jwtError("JWT not valid yet")
 		case errors.Is(err, jwt.ErrTokenInvalidAudience):
 			return jwtError("JWT not in audience")
 		}
 		return jwtError(err.Error())
 	}
-	rc.claims = claims
+	rc.claims = claims // shared with the JWT cache: read only
 	role := claimPath(claims, s.cfg.JWTRoleClaim)
 	if role == "" {
 		if s.cfg.DBAnonRole == "" {
@@ -58,25 +54,6 @@ func (s *Server) authenticate(rc *reqCtx) error {
 	}
 	rc.role = role
 	return nil
-}
-
-func (s *Server) jwtKey(t *jwt.Token) (any, error) {
-	secret := s.cfg.JWTSecret
-	if !strings.HasPrefix(strings.TrimSpace(secret), "-----BEGIN") {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method %s", t.Method.Alg())
-		}
-		return []byte(secret), nil
-	}
-	block, _ := pem.Decode([]byte(secret))
-	if block == nil {
-		return nil, errors.New("invalid PEM in jwt-secret")
-	}
-	key, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	return key, nil
 }
 
 // claimPath reads a dotted claim path such as "app_metadata.role".

@@ -109,6 +109,7 @@ func main() {
 			}
 			w.WriteHeader(http.StatusNoContent)
 		})
+		admin.Handle("/metrics", srv.Metrics())
 		if cfg.AdminPprof {
 			admin.HandleFunc("/debug/pprof/", pprof.Index)
 			admin.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -127,17 +128,25 @@ func main() {
 
 	addr := net.JoinHostPort(cfg.ServerHost, strconv.Itoa(cfg.ServerPort))
 	hs := &http.Server{Addr: addr, Handler: srv, ReadHeaderTimeout: 10 * time.Second}
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
+		log.Info("shutting down: finishing requests in flight")
 		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		hs.Shutdown(sctx)
+		if err := hs.Shutdown(sctx); err != nil {
+			log.Warn("requests still running after 10s, closing anyway", "err", err)
+		}
 	}()
 	log.Info("listening", "addr", addr)
 	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
+	// ListenAndServe returns as soon as Shutdown starts: wait for the requests
+	// in flight before the deferred srv.Close() closes their connections
+	<-stopped
 }
 
 func listenReload(ctx context.Context, cfg *config.Config, srv *server.Server, log *slog.Logger) {

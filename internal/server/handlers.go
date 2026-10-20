@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mariuz/firebirdrest/internal/query"
 	"github.com/mariuz/firebirdrest/internal/schema"
@@ -15,6 +16,7 @@ import (
 var urlParseQuery = url.ParseQuery
 
 func (s *Server) params(rc *reqCtx, isArg func(string) bool) (*query.Params, error) {
+	defer since(&rc.timing.parse, time.Now())
 	p, err := query.ParseQuery(rc.r.URL.Query(), isArg)
 	if err != nil {
 		return nil, err
@@ -63,7 +65,7 @@ func contentRange(offset, n int, total int64) string {
 
 // readNode builds the read tree, failing on root-only parameters misuse.
 func (s *Server) readNode(rc *reqCtx, rel *schema.Relation, p *query.Params) (*query.ReadNode, error) {
-	return query.BuildRead(rc.sc, rel, p, s.cfg.DBMaxRows)
+	return s.buildRead(rc, rel, p, s.cfg.DBMaxRows)
 }
 
 func (s *Server) read(rc *reqCtx, rel *schema.Relation) error {
@@ -199,7 +201,7 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 	if err != nil {
 		return err
 	}
-	rows, isArray, err := readBody(rc.r)
+	rows, isArray, err := rc.readBody()
 	if err != nil {
 		return err
 	}
@@ -373,7 +375,7 @@ func (s *Server) representation(rc *reqCtx, rel *schema.Relation, p *query.Param
 	for path, o := range p.Order {
 		readParams.Order[path] = o // the root order keeps a limited PATCH's rows in order
 	}
-	n, err := query.BuildRead(rc.sc, rel, readParams, 0)
+	n, err := s.buildRead(rc, rel, readParams, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +406,7 @@ func (s *Server) update(rc *reqCtx, rel *schema.Relation) error {
 	if err != nil {
 		return err
 	}
-	rows, isArray, err := readBody(rc.r)
+	rows, isArray, err := rc.readBody()
 	if err != nil {
 		return err
 	}
@@ -415,7 +417,7 @@ func (s *Server) update(rc *reqCtx, rel *schema.Relation) error {
 	if err != nil {
 		return err
 	}
-	n, err := query.BuildRead(rc.sc, rel, p, 0)
+	n, err := s.buildRead(rc, rel, p, 0)
 	if err != nil {
 		return err
 	}
@@ -511,7 +513,7 @@ func (s *Server) put(rc *reqCtx, rel *schema.Relation) error {
 			return &query.Error{Status: 405, Code: "FBRST105", Message: "PUT requires eq filters on all primary key columns"}
 		}
 	}
-	rows, isArray, err := readBody(rc.r)
+	rows, isArray, err := rc.readBody()
 	if err != nil {
 		return err
 	}
@@ -563,7 +565,7 @@ func (s *Server) delete(rc *reqCtx, rel *schema.Relation) error {
 	if err != nil {
 		return err
 	}
-	n, err := query.BuildRead(rc.sc, rel, p, 0)
+	n, err := s.buildRead(rc, rel, p, 0)
 	if err != nil {
 		return err
 	}

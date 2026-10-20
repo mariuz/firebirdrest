@@ -32,13 +32,18 @@ type Config struct {
 	// seconds, releasing their metadata locks (0 = never).
 	DBPreparedStatementsIdle int
 	DBReloadEvent            string // POST_EVENT name that triggers a schema reload
-	JWTSecret                string // HMAC secret, or PEM encoded RSA/ECDSA public key
+	JWTSecret                string // HMAC secret, PEM public key, JWK or JWKS; "@file" reads it from a file
+	JWTSecretIsBase64        bool   // the HMAC secret is base64 encoded
+	JWTJWKSURL               string // JWKS fetched over HTTP(S) and refreshed
+	JWTJWKSRefresh           int    // seconds between fetches of JWTJWKSURL
+	JWTCacheMaxEntries       int    // accepted tokens remembered (0 disables the cache)
 	JWTAudience              string
 	JWTRoleClaim             string // dotted path, e.g. "role" or "app_metadata.role"
 	ServerHost               string
 	ServerPort               int
 	AdminPort                int  // 0 = disabled; serves /live and /ready
 	AdminPprof               bool // also serve Go profiling endpoints at /debug/pprof/ on the admin port
+	ServerTiming             bool // add a Server-Timing header to responses
 	CORSOrigins              string
 	OpenAPIProxyURI          string
 	LogLevel                 string
@@ -60,10 +65,15 @@ var keys = map[string]string{
 	"db-prepared-statements-idle": "FBREST_DB_PREPARED_STATEMENTS_IDLE",
 	"db-reload-event":             "FBREST_DB_RELOAD_EVENT",
 	"jwt-secret":                  "FBREST_JWT_SECRET",
+	"jwt-secret-is-base64":        "FBREST_JWT_SECRET_IS_BASE64",
+	"jwt-jwks-url":                "FBREST_JWT_JWKS_URL",
+	"jwt-jwks-refresh":            "FBREST_JWT_JWKS_REFRESH",
+	"jwt-cache-max-entries":       "FBREST_JWT_CACHE_MAX_ENTRIES",
 	"jwt-aud":                     "FBREST_JWT_AUD",
 	"jwt-role-claim-key":          "FBREST_JWT_ROLE_CLAIM_KEY",
 	"server-host":                 "FBREST_SERVER_HOST",
 	"server-port":                 "FBREST_SERVER_PORT",
+	"server-timing-enabled":       "FBREST_SERVER_TIMING_ENABLED",
 	"admin-server-port":           "FBREST_ADMIN_SERVER_PORT",
 	"admin-pprof":                 "FBREST_ADMIN_PPROF",
 	"server-cors-allowed-origins": "FBREST_SERVER_CORS_ALLOWED_ORIGINS",
@@ -136,6 +146,7 @@ func Load(path string) (*Config, error) {
 		DBReloadEvent:   get("FBREST_DB_RELOAD_EVENT", "fbrest_reload"),
 		JWTSecret:       get("FBREST_JWT_SECRET", ""),
 		JWTAudience:     get("FBREST_JWT_AUD", ""),
+		JWTJWKSURL:      get("FBREST_JWT_JWKS_URL", ""),
 		JWTRoleClaim:    get("FBREST_JWT_ROLE_CLAIM_KEY", "role"),
 		ServerHost:      get("FBREST_SERVER_HOST", "0.0.0.0"),
 		CORSOrigins:     get("FBREST_SERVER_CORS_ALLOWED_ORIGINS", "*"),
@@ -155,6 +166,21 @@ func Load(path string) (*Config, error) {
 	if c.DBPreparedStatementsIdle, err = geti("FBREST_DB_PREPARED_STATEMENTS_IDLE", 30); err != nil {
 		return nil, err
 	}
+	if c.JWTJWKSRefresh, err = geti("FBREST_JWT_JWKS_REFRESH", 3600); err != nil {
+		return nil, err
+	}
+	if c.JWTJWKSRefresh < 30 {
+		return nil, fmt.Errorf("jwt-jwks-refresh must be at least 30 seconds, got %d", c.JWTJWKSRefresh)
+	}
+	if c.JWTCacheMaxEntries, err = geti("FBREST_JWT_CACHE_MAX_ENTRIES", 1000); err != nil {
+		return nil, err
+	}
+	if c.JWTCacheMaxEntries < 0 {
+		return nil, fmt.Errorf("jwt-cache-max-entries must not be negative, got %d", c.JWTCacheMaxEntries)
+	}
+	if c.JWTJWKSURL != "" && !strings.HasPrefix(c.JWTJWKSURL, "https://") && !strings.HasPrefix(c.JWTJWKSURL, "http://") {
+		return nil, fmt.Errorf("jwt-jwks-url must be an http:// or https:// URL, got %q", c.JWTJWKSURL)
+	}
 	if c.ServerPort, err = geti("FBREST_SERVER_PORT", 3000); err != nil {
 		return nil, err
 	}
@@ -169,6 +195,8 @@ func Load(path string) (*Config, error) {
 			c.DBSchemas = append(c.DBSchemas, name)
 		}
 	}
+	c.JWTSecretIsBase64 = isTrue(get("FBREST_JWT_SECRET_IS_BASE64", "false"))
+	c.ServerTiming = isTrue(get("FBREST_SERVER_TIMING_ENABLED", "false"))
 	c.AdminPprof = isTrue(get("FBREST_ADMIN_PPROF", "false"))
 	c.DBRequestContext = strings.ToLower(get("FBREST_DB_REQUEST_CONTEXT", "auto"))
 	switch c.DBRequestContext {

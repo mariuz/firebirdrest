@@ -28,6 +28,7 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 - **Stored procedures and PSQL functions** over `/rpc/…`, including routines in **packages** (`/rpc/pkg.name`)
 - **Security through Firebird roles**: JWT `role` claim → Firebird `ROLE`; claims readable from PSQL with `RDB$GET_CONTEXT`
 - **OpenAPI 3** document at `/`
+- **Monitoring**: Prometheus metrics on the admin port and an optional `Server-Timing` header
 - **Schema cache reload** on `POST_EVENT 'fbrest_reload'`, `SIGUSR1` or `POST /reload`
 - Works with Firebird **3, 4 and 5** (the integration suite runs against all three), and is tested
   against the Firebird 6 snapshot ahead of its release
@@ -94,8 +95,10 @@ GRANT web_user TO USER authenticator;
 > grant. If the authenticator user isn't granted a role, Firebird quietly connects with no role.
 > FirebirdREST checks `CURRENT_ROLE` and refuses the request with 403 instead.
 
-Tokens are verified with `jwt-secret` (HS256/384/512), or with a PEM public key (RS*/ES*).
-`exp`, `nbf` and (if configured) `aud` are checked.
+Tokens are verified with `jwt-secret`: an HMAC secret (HS256/384/512), a PEM public key or
+certificate (RS*/PS*/ES*/EdDSA), or a JWK/JWKS. `jwt-jwks-url` fetches the keys of an identity
+provider such as Auth0 or Keycloak and follows their rotation. `exp`, `nbf` and (if configured)
+`aud` are checked, and accepted tokens are cached.
 
 ```sh
 curl localhost:3000/customers -H "Authorization: Bearer $TOKEN"
@@ -396,11 +399,15 @@ Settings come from an optional config file (`firebirdrest app.conf`; see
 | `db-prepared-statements` | `FBREST_DB_PREPARED_STATEMENTS` | `256` | prepared statements cached per role (0 = off) |
 | `db-prepared-statements-idle` | `FBREST_DB_PREPARED_STATEMENTS_IDLE` | `30` | close cached statements unused for this many seconds (see [DDL notes](docs/benchmarks.md#prepared-statements-and-ddl)) |
 | `db-reload-event` | `FBREST_DB_RELOAD_EVENT` | `fbrest_reload` | `POST_EVENT` that reloads the schema cache |
-| `jwt-secret` | `FBREST_JWT_SECRET` | none | HMAC secret, or PEM public key |
+| `jwt-secret` | `FBREST_JWT_SECRET` | none | HMAC secret, PEM key or certificate, JWK or JWKS; `@/path` reads a file |
+| `jwt-secret-is-base64` | `FBREST_JWT_SECRET_IS_BASE64` | `false` | the HMAC secret is base64 encoded |
+| `jwt-jwks-url` | `FBREST_JWT_JWKS_URL` | none | identity provider JWKS, refreshed every `jwt-jwks-refresh` (`3600`) seconds |
+| `jwt-cache-max-entries` | `FBREST_JWT_CACHE_MAX_ENTRIES` | `1000` | accepted tokens cached (0 = off) |
 | `jwt-aud` | `FBREST_JWT_AUD` | none | required `aud` claim |
 | `jwt-role-claim-key` | `FBREST_JWT_ROLE_CLAIM_KEY` | `role` | dotted path to the role, e.g. `app_metadata.role` |
 | `server-host` / `server-port` | `FBREST_SERVER_HOST` / `FBREST_SERVER_PORT` | `0.0.0.0` / `3000` | |
-| `admin-server-port` | `FBREST_ADMIN_SERVER_PORT` | `0` (off) | `GET /live`, `GET /ready`, `POST /reload` |
+| `server-timing-enabled` | `FBREST_SERVER_TIMING_ENABLED` | `false` | add a `Server-Timing` header |
+| `admin-server-port` | `FBREST_ADMIN_SERVER_PORT` | `0` (off) | `GET /live`, `GET /ready`, `POST /reload`, `GET /metrics` (Prometheus) |
 | `admin-pprof` | `FBREST_ADMIN_PPROF` | `false` | also serve Go profiling at `/debug/pprof/` on the admin port |
 | `server-cors-allowed-origins` | `FBREST_SERVER_CORS_ALLOWED_ORIGINS` | `*` | comma-separated list |
 | `openapi-server-proxy-uri` | `FBREST_OPENAPI_SERVER_PROXY_URI` | request host | public URL shown in the OpenAPI document |

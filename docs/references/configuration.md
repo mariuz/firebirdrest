@@ -59,7 +59,11 @@ Don't add `role=` yourself: FirebirdREST sets the role per request.
 
 | Key | Environment | Default | |
 |---|---|---|---|
-| `jwt-secret` | `FBREST_JWT_SECRET` | none | HMAC secret, or a PEM public key for RSA/ECDSA tokens |
+| `jwt-secret` | `FBREST_JWT_SECRET` | none | HMAC secret, PEM public key or certificate, JWK or JWKS; `@/path` reads it from a file ([formats](security.md#json-web-tokens)) |
+| `jwt-secret-is-base64` | `FBREST_JWT_SECRET_IS_BASE64` | `false` | the HMAC secret is base64 encoded |
+| `jwt-jwks-url` | `FBREST_JWT_JWKS_URL` | none | JWKS of an identity provider, fetched over HTTP(S) and refreshed ([details](security.md#keys-from-an-identity-provider)) |
+| `jwt-jwks-refresh` | `FBREST_JWT_JWKS_REFRESH` | `3600` | seconds between fetches of `jwt-jwks-url` (minimum 30) |
+| `jwt-cache-max-entries` | `FBREST_JWT_CACHE_MAX_ENTRIES` | `1000` | accepted tokens remembered to skip signature checks; `0` disables the cache |
 | `jwt-aud` | `FBREST_JWT_AUD` | none | required `aud` claim |
 | `jwt-role-claim-key` | `FBREST_JWT_ROLE_CLAIM_KEY` | `role` | claim holding the role; dots for nested claims (`app_metadata.role`) |
 
@@ -71,12 +75,13 @@ Don't add `role=` yourself: FirebirdREST sets the role per request.
 | `server-port` | `FBREST_SERVER_PORT` | `3000` | API port |
 | `server-cors-allowed-origins` | `FBREST_SERVER_CORS_ALLOWED_ORIGINS` | `*` | comma-separated origins allowed by CORS; empty disables CORS headers |
 | `openapi-server-proxy-uri` | `FBREST_OPENAPI_SERVER_PROXY_URI` | request host | public URL shown in the OpenAPI document |
-| `admin-server-port` | `FBREST_ADMIN_SERVER_PORT` | `0` (off) | admin server: `GET /live`, `GET /ready`, `POST /reload` |
+| `server-timing-enabled` | `FBREST_SERVER_TIMING_ENABLED` | `false` | add a `Server-Timing` header to responses ([details](observability.md#server-timing)) |
+| `admin-server-port` | `FBREST_ADMIN_SERVER_PORT` | `0` (off) | admin server: `GET /live`, `GET /ready`, `POST /reload`, `GET /metrics` |
 | `admin-pprof` | `FBREST_ADMIN_PPROF` | `false` | serve Go profiling at `/debug/pprof/` on the admin port |
 | `log-level` | `FBREST_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; `info` logs every request |
 
 The admin server listens on `server-host` too. Don't expose it publicly: anyone who can reach it
-can reload the schema cache, and with `admin-pprof` read profiling data.
+can reload the schema cache, read the metrics, and with `admin-pprof` read profiling data.
 
 ## Command line
 

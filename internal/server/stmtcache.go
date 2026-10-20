@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,6 +24,8 @@ type stmtCache struct {
 	ll      *list.List // front = most recently used
 	items   map[string]*list.Element
 	pending map[string]bool // being prepared in the background
+
+	hits, misses atomic.Uint64
 }
 
 type cacheEntry struct {
@@ -71,6 +74,12 @@ func (c *stmtCache) janitor() {
 	}
 }
 
+func (c *stmtCache) len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ll.Len()
+}
+
 // close stops the janitor and closes every statement.
 func (c *stmtCache) close() {
 	select {
@@ -92,8 +101,10 @@ func (c *stmtCache) get(query string) *sql.Stmt {
 		c.ll.MoveToFront(el)
 		e := el.Value.(*cacheEntry)
 		e.lastUsed = time.Now()
+		c.hits.Add(1)
 		return e.stmt
 	}
+	c.misses.Add(1)
 	if !c.pending[query] {
 		c.pending[query] = true
 		go c.prepare(query)

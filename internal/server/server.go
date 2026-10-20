@@ -30,6 +30,8 @@ type Server struct {
 	base    *sql.DB // connection without a role, used to read the schema
 	catalog atomic.Pointer[schema.Catalog]
 	log     *slog.Logger
+	m       *metrics
+	jwt     *jwtVerifier
 
 	mu    sync.Mutex
 	pools map[string]*rolePool
@@ -56,7 +58,13 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, base: db, log: log, pools: map[string]*rolePool{}}
+	s := &Server{cfg: cfg, base: db, log: log, pools: map[string]*rolePool{}, m: newMetrics()}
+	jv, err := newJWTVerifier(cfg, log, s.m)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	s.jwt = jv
 	s.basep = s.newRolePool(db)
 	if err := s.Reload(ctx); err != nil {
 		db.Close()
@@ -69,10 +77,15 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 func (s *Server) Reload(ctx context.Context) error {
 	start := time.Now()
 	cat, err := schema.LoadCatalog(ctx, s.base, s.cfg.DBSchemas)
+	s.m.reloads.Add(1)
 	if err != nil {
+		s.m.reloadErrors.Add(1)
 		return fmt.Errorf("loading schema: %w", err)
 	}
 	s.catalog.Store(cat)
+	s.m.lastLoadNanos.Store(int64(time.Since(start)))
+	s.m.lastLoadAt.Store(time.Now().Unix())
+	s.jwt.clearCache()
 	// cached statements may refer to objects that were just altered
 	s.mu.Lock()
 	for _, rp := range append(s.poolList(), s.basep) {
@@ -92,6 +105,7 @@ func (s *Server) Reload(ctx context.Context) error {
 
 // Close releases all connections.
 func (s *Server) Close() {
+	s.jwt.close()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range append(s.poolList(), s.basep) {
@@ -186,17 +200,21 @@ type reqCtx struct {
 	tx     *cachedTx
 	status int
 	plan   *planCapture // set for Accept: application/vnd.pgrst.plan
+	timing timing
 }
 
 // ServeHTTP routes requests.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	rw := &statusWriter{ResponseWriter: w, status: 200}
+	errCode := ""
 	defer func() {
 		if rec := recover(); rec != nil {
 			s.log.Error("panic", "err", rec, "path", r.URL.Path)
-			writeError(rw, &query.Error{Status: 500, Code: "FBRST000", Message: "internal server error"})
+			errCode = "FBRST000"
+			writeError(rw, &query.Error{Status: 500, Code: errCode, Message: "internal server error"})
 		}
+		s.m.request(r.Method, rw.status, time.Since(start), errCode)
 		s.log.Info("request", "method", r.Method, "path", r.URL.Path, "status", rw.status,
 			"took", time.Since(start).Round(time.Microsecond))
 	}()
@@ -207,7 +225,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.handle(rw, r); err != nil {
-		writeError(rw, toAPIError(err))
+		e := toAPIError(err)
+		errCode = e.Code
+		writeError(rw, e)
 	}
 }
 
@@ -264,7 +284,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 	if err := rc.prefer.check(); err != nil {
 		return err
 	}
-	if err := s.authenticate(rc); err != nil {
+	jwtStart := time.Now()
+	err = s.authenticate(rc)
+	since(&rc.timing.jwt, jwtStart)
+	if err != nil {
 		return err
 	}
 	if rc.prefer.loc != nil {
@@ -283,6 +306,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 	}
 	err = s.route(rc, parts)
 	if err == nil && rc.plan != nil {
+		if f := s.timingHeader(rc); f != nil {
+			f(w.Header())
+		}
 		return rc.plan.write(w)
 	}
 	if err != nil && rc.anon {
@@ -342,11 +368,20 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 	if err != nil {
 		return err
 	}
+	rc.timing.txStart = time.Now()
 	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: ro})
 	if err != nil {
 		return err
 	}
 	rc.tx = &cachedTx{tx: tx, cache: p.cache}
+	// hold the response until COMMIT succeeds (plan mode discards it anyway)
+	out := rc.w
+	var held *txWriter
+	if rc.plan == nil {
+		held = newTxWriter()
+		rc.w = held
+		defer func() { rc.w = out }()
+	}
 	done := false
 	zoned := false
 	// the connection goes back to the pool: undo SET TIME ZONE first
@@ -393,9 +428,24 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 	resetZone()
 	done = true
 	if rc.prefer.tx == "rollback" {
-		return tx.Rollback()
+		err = tx.Rollback()
+	} else {
+		err = tx.Commit()
 	}
-	return tx.Commit()
+	rc.timing.tx = time.Since(rc.timing.txStart)
+	if err != nil || held == nil {
+		return err
+	}
+	held.flush(out, s.timingHeader(rc))
+	return nil
+}
+
+// timingHeader adds Server-Timing when server-timing-enabled is set.
+func (s *Server) timingHeader(rc *reqCtx) func(http.Header) {
+	if !s.cfg.ServerTiming {
+		return nil
+	}
+	return func(h http.Header) { h.Set("Server-Timing", rc.timing.header()) }
 }
 
 // setContext exposes request data to SQL via RDB$GET_CONTEXT('USER_TRANSACTION', ...).

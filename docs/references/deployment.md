@@ -66,6 +66,7 @@ With `admin-server-port` set:
 | `GET /live` | `200` while the process runs |
 | `GET /ready` | `200` when the database answers, `503` otherwise |
 | `POST /reload` | reload the schema cache (`204`) |
+| `GET /metrics` | metrics in the Prometheus format ([list](observability.md#metrics)) |
 
 ```yaml
 # Kubernetes

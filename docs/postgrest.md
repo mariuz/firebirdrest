@@ -16,6 +16,9 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 - `/rpc/<name>` with `GET` (read-only) and `POST`, `Prefer: params=multiple-objects` and
   `params=single-object`.
 - JWT role switching, an anonymous role, a pre-request hook, and claims available to SQL.
+- `jwt-secret` as an HMAC secret (also base64 encoded), a PEM key, a JWK or a JWKS, or `@file`;
+  a JWT validation cache.
+- `server-timing-enabled` and the `Server-Timing` header (`jwt`, `parse`, `transaction`, `response`).
 - `application/vnd.pgrst.object+json`, CSV, OpenAPI at `/`, `{code, message, details, hint}` errors.
 - `Prefer: handling=strict`, `max-affected` and `timezone`; query plans with `Accept: application/vnd.pgrst.plan`
   (behind `db-plan-enabled`).
@@ -34,6 +37,9 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 | Aggregates | off by default | on by default (`db-aggregates-enabled`) |
 | Embedding | one SQL statement with lateral joins | one batched query per embed level |
 | Roles | `SET ROLE` per transaction | a connection pool per role (Firebird sets the role at connect time) |
+| Metrics | `pgrst_*` metrics on the admin server | `firebirdrest_*` metrics with their own names, at `/metrics` on the admin port ([list](references/observability.md#metrics)) |
+| JWT keys from a URL | not built in | `jwt-jwks-url` fetches a provider's JWKS and follows key rotation |
+| JWT cache size | `jwt-cache-max-entries` | the same; entries also expire after 5 minutes and when the JWKS changes |
 | Schema reload | `NOTIFY pgrst` | `POST_EVENT 'fbrest_reload'` |
 | Unfiltered `PATCH`/`DELETE` | allowed (unless pg-safeupdate) | refused unless `db-safe-updates = false` |
 | Request context cost | always set | only when the database reads it (`db-request-context`) |

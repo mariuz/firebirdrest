@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mariuz/firebirdrest/internal/query"
@@ -47,14 +48,14 @@ func (s *Server) rpc(rc *reqCtx, rt *schema.Routine) error {
 	case http.MethodPost:
 		switch rc.prefer.params {
 		case "single-object":
-			args, err := singleObjectArgs(rc.r, rt)
+			args, err := rc.singleObjectArgs(rt)
 			if err != nil {
 				return err
 			}
 			calls = append(calls, args)
 		case "multiple-objects":
 			multi = true
-			rows, _, err := readBody(rc.r)
+			rows, _, err := rc.readBody()
 			if err != nil {
 				return err
 			}
@@ -68,7 +69,7 @@ func (s *Server) rpc(rc *reqCtx, rt *schema.Routine) error {
 		default:
 			args := map[string]any{}
 			if rc.r.ContentLength != 0 {
-				rows, isArray, err := readBody(rc.r)
+				rows, isArray, err := rc.readBody()
 				if err != nil {
 					return err
 				}
@@ -87,7 +88,7 @@ func (s *Server) rpc(rc *reqCtx, rt *schema.Routine) error {
 	}
 	switch rt.Kind {
 	case schema.Selectable:
-		n, err := query.BuildRead(rc.sc, rt.AsRelation(), p, s.cfg.DBMaxRows)
+		n, err := s.buildRead(rc, rt.AsRelation(), p, s.cfg.DBMaxRows)
 		if err != nil {
 			return err
 		}
@@ -298,6 +299,7 @@ func executeProcedure(rc *reqCtx, rt *schema.Routine, call string, vals []any) (
 }
 
 func (s *Server) writeValue(rc *reqCtx, v any) error {
+	defer since(&rc.timing.response, time.Now())
 	mt, err := negotiate(rc.r, mimeJSON, mimeObject, "text/plain")
 	if err != nil {
 		return err

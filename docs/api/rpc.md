@@ -73,6 +73,22 @@ curl -X POST 'localhost:3000/rpc/log_request' -H 'Prefer: params=single-object' 
 The body must be valid JSON, and fit the parameter when it is a `VARCHAR`. A routine with another
 signature is refused with `FBRST129`.
 
+## Raw bodies
+
+A `POST` whose `Content-Type` is neither JSON nor a form puts the body, as it is, into the
+routine's only parameter: `text/*` bodies as text, anything else as bytes. That's the way to
+upload a file into a `BLOB`:
+
+```sh
+curl -X POST localhost:3000/rpc/blob_size -H 'Content-Type: image/png' --data-binary @cover.png \
+  -H 'Accept: text/plain'
+# 173
+curl -X POST localhost:3000/rpc/log_request -H 'Content-Type: text/plain' -d 'plain text, not JSON'
+```
+
+A routine with several parameters gets `400` (`FBRST133`): send a JSON object instead. The body
+is limited to 64 MB.
+
 ## Shaping selectable procedures
 
 The output of a selectable procedure can be selected, filtered, ordered, paged and counted like

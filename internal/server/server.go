@@ -201,6 +201,7 @@ type reqCtx struct {
 	status int
 	plan   *planCapture // set for Accept: application/vnd.pgrst.plan
 	timing timing
+	rawCol *schema.Column // the single selected column, for raw responses
 }
 
 // ServeHTTP routes requests.

@@ -51,7 +51,16 @@ func (t *timing) header() string {
 
 func (s *Server) buildRead(rc *reqCtx, rel *schema.Relation, p *query.Params, maxRows int) (*query.ReadNode, error) {
 	defer since(&rc.timing.parse, time.Now())
-	return query.BuildRead(rc.sc, rel, p, maxRows)
+	n, err := query.BuildRead(rc.sc, rel, p, maxRows)
+	if err == nil {
+		// the last node built is the one whose rows are written, so a raw
+		// single-value response knows its column (binary or not)
+		rc.rawCol = nil
+		if len(n.Fields) == 1 && len(n.Children) == 0 {
+			rc.rawCol = n.Fields[0].Col
+		}
+	}
+	return n, err
 }
 
 func (rc *reqCtx) readBody() ([]map[string]any, bool, error) {

@@ -9,12 +9,42 @@ Choose with the `Accept` header:
 | `application/json` (default, also `*/*`) | JSON array of objects |
 | `text/csv` | header row plus one line per row; embedded values are written as JSON |
 | `application/vnd.pgrst.object+json` | a single JSON object, or `406` unless exactly one row matches |
-| `text/plain` | for `/rpc` functions only: the bare value |
+| any other concrete type, e.g. `text/plain`, `application/octet-stream`, `image/png` | a single value as is: see below |
 
 ```sh
 curl 'localhost:3000/books?select=id,title' -H 'Accept: text/csv'
 curl 'localhost:3000/books?id=eq.1' -H 'Accept: application/vnd.pgrst.object+json'
 ```
+
+### Single values and files
+
+Ask for any concrete media type that isn't in the table above, and the response body is the
+value itself instead of JSON, with the `Content-Type` you asked for. The request must select
+one column and match one row:
+
+```sh
+# the bytes of a BLOB SUB_TYPE BINARY column, served as an image
+curl 'localhost:3000/covers?select=image&book_id=eq.1' -H 'Accept: image/png' > cover.png
+# a text column, as text
+curl 'localhost:3000/books?select=summary&id=eq.1' -H 'Accept: text/plain'
+# a function result, as text
+curl 'localhost:3000/rpc/add_vat?amount=100' -H 'Accept: text/plain'
+```
+
+- Binary columns (`BLOB SUB_TYPE BINARY`, `CHARACTER SET OCTETS`) are sent as their bytes; text
+  columns as their text; numbers, booleans and dates as their JSON text (`9.99`, `true`).
+  `text/*`, `+json` and `+xml` types get `; charset=utf-8`.
+- `NULL` gives an empty `204`.
+- More than one row gives `406` (`FBRST116`), more than one column `406` (`FBRST107`).
+- `application/octet-stream` works for any column. A column's own type (`image/png`,
+  `application/pdf`) is handy to serve files straight from the database; keep the type in another
+  column if it varies per row, and read it first.
+- This also covers formats FirebirdREST doesn't produce itself: a function that builds GeoJSON
+  text can be requested with `Accept: application/geo+json`.
+- It works for `/rpc` functions, procedures with one output parameter, selectable procedures, and
+  writes with `Prefer: return=representation` (for example `POST /covers?select=book_id`).
+- A built-in type anywhere in `Accept`, or a wildcard, takes precedence: a browser's
+  `text/html, */*` still gets JSON.
 
 ## Query plans
 
@@ -127,6 +157,7 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST129` | `params=single-object` on a routine without exactly one text parameter |
 | `FBRST130` | an unknown or invalid preference with `Prefer: handling=strict` |
 | `FBRST131` | a `PATCH`/`DELETE` would affect more rows than `Prefer: max-affected` |
+| `FBRST133` | a raw request body (`text/plain`, `application/octet-stream`...) sent to a routine that doesn't have exactly one parameter |
 | `FBRST132` | a query plan was asked for a method other than `GET`/`HEAD` |
 | `FBRST200` | no relationship between the tables |
 | `FBRST201` | several relationships, `!hint` needed |

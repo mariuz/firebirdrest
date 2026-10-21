@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -68,7 +69,11 @@ func (s *Server) rpc(rc *reqCtx, rt *schema.Routine) error {
 			}
 		default:
 			args := map[string]any{}
-			if rc.r.ContentLength != 0 {
+			if raw := rawBodyType(rc.r); raw != "" {
+				if args, err = rc.rawArgs(rt, raw); err != nil {
+					return err
+				}
+			} else if rc.r.ContentLength != 0 {
 				rows, isArray, err := rc.readBody()
 				if err != nil {
 					return err
@@ -141,7 +146,11 @@ func (s *Server) rpc(rc *reqCtx, rt *schema.Routine) error {
 		if multi {
 			return writeRows(rc, http.StatusOK, out)
 		}
-		return s.writeValue(rc, out[0])
+		var col *schema.Column
+		if len(rt.Out) == 1 {
+			col = rt.Out[0]
+		}
+		return s.writeValue(rc, out[0], col)
 
 	default: // function
 		var col *schema.Column
@@ -158,9 +167,9 @@ func (s *Server) rpc(rc *reqCtx, rt *schema.Routine) error {
 			vals = append(vals, query.OutputIn(v, col, query.TimeZoneOf(rc.r.Context())))
 		}
 		if multi {
-			return s.writeValue(rc, vals)
+			return s.writeValue(rc, vals, col)
 		}
-		return s.writeValue(rc, vals[0])
+		return s.writeValue(rc, vals[0], col)
 	}
 }
 
@@ -212,6 +221,43 @@ func singleObjectArgs(r *http.Request, rt *schema.Routine) (map[string]any, erro
 			Hint:    "use a BLOB SUB_TYPE TEXT parameter for large documents"}
 	}
 	return map[string]any{c.DBName: string(data)}, nil
+}
+
+// rawBodyType returns the request's media type when the body is sent as is
+// (text/plain, application/octet-stream, image/png...) instead of as JSON or
+// a form; "" otherwise.
+func rawBodyType(r *http.Request) string {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mt == mimeJSON || mt == "application/x-www-form-urlencoded" ||
+		strings.HasSuffix(mt, "+json") || r.ContentLength == 0 {
+		return ""
+	}
+	return mt
+}
+
+// rawArgs passes a raw body to the routine's only parameter: as text for a
+// text/* body, as bytes otherwise.
+func (rc *reqCtx) rawArgs(rt *schema.Routine, mt string) (map[string]any, error) {
+	defer since(&rc.timing.parse, time.Now())
+	if len(rt.In) != 1 {
+		return nil, &query.Error{Status: 400, Code: "FBRST133",
+			Message: fmt.Sprintf("a %s body goes to a single parameter, but %q has (%s)", mt, rt.Name, argList(rt)),
+			Hint:    "send a JSON object of arguments, or declare one parameter to receive the body"}
+	}
+	data, err := io.ReadAll(io.LimitReader(rc.r.Body, 64<<20))
+	if err != nil {
+		return nil, err
+	}
+	c := rt.In[0]
+	if strings.HasPrefix(mt, "text/") || isText(c) {
+		if c.FieldType != schema.TBlob && c.CharLength > 0 && utf8.RuneCount(data) > c.CharLength {
+			return nil, &query.Error{Status: 400, Code: "FBRST102",
+				Message: fmt.Sprintf("the body is longer than parameter %q (%d characters)", c.Name, c.CharLength),
+				Hint:    "use a BLOB parameter for large bodies"}
+		}
+		return map[string]any{c.DBName: string(data)}, nil
+	}
+	return map[string]any{c.DBName: data}, nil
 }
 
 func isText(c *schema.Column) bool {
@@ -298,15 +344,27 @@ func executeProcedure(rc *reqCtx, rt *schema.Routine, call string, vals []any) (
 	return obj, rows.Err()
 }
 
-func (s *Server) writeValue(rc *reqCtx, v any) error {
+// writeValue writes the result of a function or an executable procedure:
+// JSON, or with a concrete Accept type (text/plain, image/png...) the bare
+// value. col describes the value when it is one output parameter.
+func (s *Server) writeValue(rc *reqCtx, v any, col *schema.Column) error {
 	defer since(&rc.timing.response, time.Now())
-	mt, err := negotiate(rc.r, mimeJSON, mimeObject, "text/plain")
-	if err != nil {
-		return err
+	if mt := rawType(rc.r, mimeJSON, mimeObject); mt != "" {
+		var rows []*query.Obj
+		switch x := v.(type) {
+		case *query.Obj:
+			rows = []*query.Obj{x}
+		case []any: // Prefer: params=multiple-objects
+			for _, e := range x {
+				rows = append(rows, &query.Obj{Keys: []string{"value"}, Vals: []any{e}})
+			}
+		default:
+			rows = []*query.Obj{{Keys: []string{"value"}, Vals: []any{v}}}
+		}
+		return writeRaw(rc, http.StatusOK, mt, rows, col)
 	}
-	if mt == "text/plain" {
-		writeBody(rc, http.StatusOK, mt, []byte(fmt.Sprint(v)))
-		return nil
+	if _, err := negotiate(rc.r, mimeJSON, mimeObject); err != nil {
+		return err
 	}
 	writeBody(rc, http.StatusOK, mimeJSON, query.AppendJSON(nil, v))
 	return nil

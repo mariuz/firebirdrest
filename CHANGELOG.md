@@ -22,6 +22,15 @@ All notable changes to FirebirdREST are listed here. The project follows
 - A JWT validation cache (`jwt-cache-max-entries`, default 1000) skips the signature check for
   tokens already accepted, until they expire or for 5 minutes.
 
+- Single values as is: any concrete `Accept` type that isn't a built-in format (`text/plain`,
+  `application/octet-stream`, `image/png`, `application/geo+json`...) returns the one selected
+  value of the one matching row as the body, with that `Content-Type`. Binary columns are sent
+  as their bytes, so files can be served straight from the database. Works for reads, writes
+  with `return=representation` and RPC.
+- Raw request bodies for RPC: a `POST /rpc/<name>` whose `Content-Type` isn't JSON or a form puts
+  the body into the routine's only parameter, as text or bytes (`FBRST133` otherwise).
+- The example database has a `covers` table with a binary BLOB and a `blob_size` function.
+
 ### Fixed
 - Responses are sent only after the transaction commits. A failed `COMMIT` now returns an error
   instead of a success response, and headers set before an error (such as `Content-Range` on a

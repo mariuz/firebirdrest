@@ -49,8 +49,7 @@ so PostgREST client libraries and habits mostly carry over. Firebird is not Post
 | Query plans | `EXPLAIN` output (text or JSON), also for writes | Firebird's explained plan per statement, for `GET`/`HEAD` only |
 | `Prefer: timezone` | changes how `timestamptz` is displayed | `WITH TIME ZONE` values carry a zone in Firebird, so they are converted to the requested zone; ignored on Firebird 3 |
 
-## Not implemented yet
+| Custom media types | handler functions per media type | any concrete `Accept` type returns a single value as is ([details](api/formats-errors.md#single-values-and-files)); a raw request body goes to a routine's only parameter |
+| `application/geo+json` | built in | request it from a function that returns GeoJSON text |
 
-- `Accept: application/geo+json`, custom media type handlers.
-
-Open an issue if you need one of these.
+Open an issue if you miss something.

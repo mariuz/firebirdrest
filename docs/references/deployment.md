@@ -111,3 +111,9 @@ CREATE DATABASE 'app.fdb' DEFAULT CHARACTER SET UTF8;
 
 or connect with the database's own character set, for example
 `db-uri = "user:pass@host/app.fdb?charset=NONE"`.
+
+A second issue of the same kind affects binary data: with the current driver, Firebird 6 refuses
+to read `CHARACTER SET OCTETS` columns and to write binary values under 32 KB (into `BLOB
+SUB_TYPE BINARY` or `OCTETS` columns) with *Malformed string*, because it validates them as
+UTF8 text. `BLOB SUB_TYPE BINARY` reads, and writes of 32 KB and more, work. The driver fix is
+on the branch [`fix-fb6-octets`](https://github.com/mariuz/firebirdsql/tree/fix-fb6-octets), being sent upstream.

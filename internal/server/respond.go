@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"database/sql/driver"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"github.com/nakagami/firebirdsql"
 
 	"github.com/mariuz/firebirdrest/internal/query"
+	"github.com/mariuz/firebirdrest/internal/schema"
 )
 
 const (
@@ -194,9 +196,77 @@ func negotiate(r *http.Request, allowed ...string) (string, error) {
 		Message: fmt.Sprintf("none of these media types are available: %s", accept)}
 }
 
+// rawType returns the media type to send a single value as, when the Accept
+// header asks for a concrete type that isn't one of the built-in formats:
+// text/plain, application/octet-stream, image/png, application/geo+json...
+// It is "" when the header is empty, a wildcard, or lists a built-in type.
+func rawType(r *http.Request, builtin ...string) string {
+	first := ""
+	for _, part := range strings.Split(r.Header.Get("Accept"), ",") {
+		mt, _, err := mime.ParseMediaType(strings.TrimSpace(part))
+		if err != nil {
+			continue
+		}
+		if strings.Contains(mt, "*") || slices.Contains(builtin, mt) || strings.HasPrefix(mt, mimePlan) {
+			return ""
+		}
+		if first == "" && strings.Contains(mt, "/") {
+			first = mt
+		}
+	}
+	return first
+}
+
+// writeRaw sends one value as the body, with the requested media type: the
+// bytes of a binary column, the text of a text column, or the JSON of any
+// other scalar. The result must be one row of one column.
+func writeRaw(rc *reqCtx, status int, mt string, rows []*query.Obj, col *schema.Column) error {
+	if len(rows) != 1 {
+		return &query.Error{Status: 406, Code: "FBRST116",
+			Message: fmt.Sprintf("%s requested, but the result has %d rows instead of one", mt, len(rows)),
+			Hint:    "a single value needs filters that match exactly one row"}
+	}
+	if len(rows[0].Keys) != 1 {
+		return &query.Error{Status: 406, Code: "FBRST107",
+			Message: fmt.Sprintf("%s requested, but %d columns were selected instead of one", mt, len(rows[0].Keys)),
+			Hint:    "select the one column to return, e.g. select=image"}
+	}
+	var body []byte
+	switch v := rows[0].Vals[0].(type) {
+	case nil:
+		writeBody(rc, http.StatusNoContent, "", nil)
+		return nil
+	case []byte:
+		body = v
+	case string:
+		if col != nil && col.IsBinary() {
+			b, err := base64.StdEncoding.DecodeString(v)
+			if err != nil {
+				return err
+			}
+			body = b
+		} else {
+			body = []byte(v)
+		}
+	case json.Number:
+		body = []byte(v)
+	default:
+		body = query.AppendJSON(nil, v)
+	}
+	if strings.HasPrefix(mt, "text/") || strings.HasSuffix(mt, "+json") || strings.HasSuffix(mt, "+xml") || mt == "application/xml" {
+		mt += "; charset=utf-8"
+	}
+	rc.w.Header().Set("Content-Type", mt)
+	writeBody(rc, status, "", body)
+	return nil
+}
+
 // writeRows writes a result set in the negotiated format.
 func writeRows(rc *reqCtx, status int, rows []*query.Obj) error {
 	defer since(&rc.timing.response, time.Now())
+	if mt := rawType(rc.r, mimeJSON, mimeObject, mimeCSV); mt != "" {
+		return writeRaw(rc, status, mt, rows, rc.rawCol)
+	}
 	mt, err := negotiate(rc.r, mimeJSON, mimeObject, mimeCSV)
 	if err != nil {
 		return err

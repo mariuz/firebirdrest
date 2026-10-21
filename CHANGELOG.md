@@ -30,6 +30,8 @@ All notable changes to FirebirdREST are listed here. The project follows
 - Raw request bodies for RPC: a `POST /rpc/<name>` whose `Content-Type` isn't JSON or a form puts
   the body into the routine's only parameter, as text or bytes (`FBRST133` otherwise).
 - The example database has a `covers` table with a binary BLOB and a `blob_size` function.
+- A raw single-value response sends a binary value as the driver returns it, without a base64
+  encode/decode round trip, so serving a file holds one copy of it in memory.
 
 ### Fixed
 - Responses are sent only after the transaction commits. A failed `COMMIT` now returns an error

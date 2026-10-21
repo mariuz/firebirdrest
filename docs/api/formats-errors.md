@@ -46,6 +46,19 @@ curl 'localhost:3000/rpc/add_vat?amount=100' -H 'Accept: text/plain'
 - A built-in type anywhere in `Accept`, or a wildcard, takes precedence: a browser's
   `text/html, */*` still gets JSON.
 
+### Binary data and memory
+
+In JSON, `BLOB SUB_TYPE BINARY` and `CHARACTER SET OCTETS` values are base64 strings, and are
+sent the same way on input. Firebird returns a BLOB as a whole, so each BLOB in a response is
+held in memory while the request runs: a raw single-value response holds it once, a JSON response
+also holds its base64 form. Keep that in mind for large files:
+
+- Select only the columns you need: `select=*` includes BLOB columns.
+- Serve files with a raw single-value request (above) rather than through JSON.
+- To show sizes without reading the data, expose `OCTET_LENGTH(image)` through a
+  [computed field](computed.md).
+- `db-max-rows` bounds the number of rows, not their size.
+
 ## Query plans
 
 To see how Firebird runs a request, ask for its plan instead of its data. This is off by default,

@@ -321,7 +321,7 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 			keys = append(keys, v)
 			o := &query.Obj{}
 			for i, c := range retCols {
-				o.Set(c.Name, query.OutputIn(v[i], c, query.TimeZoneOf(rc.r.Context())))
+				o.Set(c.Name, query.OutputCtx(rc.r.Context(), v[i], c))
 			}
 			returned = append(returned, o)
 		}

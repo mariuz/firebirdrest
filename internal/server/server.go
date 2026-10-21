@@ -300,6 +300,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 			rc.r = rc.r.WithContext(query.WithTimeZone(rc.r.Context(), rc.prefer.loc))
 		}
 	}
+	if rawType(r, mimeJSON, mimeObject, mimeCSV) != "" {
+		// one value sent as is: keep binary values as bytes, not base64
+		rc.r = rc.r.WithContext(query.WithRawBinary(rc.r.Context()))
+	}
 	if format := planFormat(r); format != "" {
 		if err := s.startPlan(rc, format); err != nil {
 			return err

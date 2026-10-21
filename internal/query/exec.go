@@ -366,7 +366,6 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		return nil, err
 	}
 	defer rs.Close()
-	loc := TimeZoneOf(ctx)
 	nf := len(n.Fields)
 	total := len(sel)
 	fieldCols := make([]*schema.Column, nf)
@@ -385,7 +384,7 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		}
 		r := &row{obj: newObj(n)}
 		for i, f := range n.Fields {
-			r.obj.Set(f.Key, OutputIn(vals[i], fieldCols[i], loc))
+			r.obj.Set(f.Key, OutputCtx(ctx, vals[i], fieldCols[i]))
 		}
 		r.hidden = vals[nf : nf+nHidden]
 		r.match = vals[nf+nHidden : nf+nHidden+len(matchCols)]
@@ -418,9 +417,9 @@ func executeComputed(ctx context.Context, q Querier, c *ReadNode, key []any) (*r
 	for _, f := range c.Fields {
 		for i, out := range rt.Out {
 			if out.DBName == f.Col.DBName {
-				v := OutputIn(vals[i], out, TimeZoneOf(ctx))
+				v := OutputCtx(ctx, vals[i], out)
 				if f.Cast != "" {
-					v = OutputIn(vals[i], FieldColumn(f), TimeZoneOf(ctx))
+					v = OutputCtx(ctx, vals[i], FieldColumn(f))
 				}
 				r.obj.Set(f.Key, v)
 			}
@@ -625,6 +624,13 @@ func chunks(keys [][]any, size int) [][][]any {
 }
 
 type timeZoneKey struct{}
+type rawBinaryKey struct{}
+
+// WithRawBinary returns a context whose reads keep binary values as bytes
+// instead of base64 text: for a response that sends one value as it is.
+func WithRawBinary(ctx context.Context) context.Context {
+	return context.WithValue(ctx, rawBinaryKey{}, true)
+}
 
 // WithTimeZone returns a context whose reads render TIME/TIMESTAMP WITH TIME
 // ZONE values in loc (Prefer: timezone=).
@@ -647,6 +653,15 @@ func OutputIn(v any, c *schema.Column, loc *time.Location) any {
 		v = t.In(loc)
 	}
 	return Output(v, c)
+}
+
+// OutputCtx is OutputIn with the context's time zone and binary mode.
+func OutputCtx(ctx context.Context, v any, c *schema.Column) any {
+	if b, ok := v.([]byte); ok && ctx.Value(rawBinaryKey{}) != nil &&
+		((c != nil && c.IsBinary()) || !utf8.Valid(b)) {
+		return b
+	}
+	return OutputIn(v, c, TimeZoneOf(ctx))
 }
 
 // Output converts a value from the driver into its JSON form.

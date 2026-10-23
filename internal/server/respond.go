@@ -181,10 +181,7 @@ func negotiate(r *http.Request, allowed ...string) (string, error) {
 		return allowed[0], nil
 	}
 	for _, part := range strings.Split(accept, ",") {
-		mt, _, err := mime.ParseMediaType(strings.TrimSpace(part))
-		if err != nil {
-			continue
-		}
+		mt, _ := parseAccept(part)
 		if mt == "*/*" || mt == "application/*" {
 			return allowed[0], nil
 		}
@@ -203,8 +200,8 @@ func negotiate(r *http.Request, allowed ...string) (string, error) {
 func rawType(r *http.Request, builtin ...string) string {
 	first := ""
 	for _, part := range strings.Split(r.Header.Get("Accept"), ",") {
-		mt, _, err := mime.ParseMediaType(strings.TrimSpace(part))
-		if err != nil {
+		mt, _ := parseAccept(part)
+		if mt == "" {
 			continue
 		}
 		if strings.Contains(mt, "*") || slices.Contains(builtin, mt) || strings.HasPrefix(mt, mimePlan) {

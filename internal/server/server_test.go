@@ -628,6 +628,11 @@ func TestQueryPlans(t *testing.T) {
 		t.Errorf("text plan: %d %s", r.status, r.body)
 	}
 
+	// postgrest-js sends an empty options= parameter, which strict parsers reject
+	r = do(t, ts, "GET", "/books?select=id&id=eq.1", "", "Accept", `application/vnd.pgrst.plan+text; for="application/json"; options=;`)
+	if r.status != 200 || !strings.Contains(r.body, "BOOKS") {
+		t.Errorf("postgrest-js plan header: %d %s", r.status, r.body)
+	}
 	r = do(t, ts, "GET", "/books?select=id&id=eq.1", "", "Accept", `application/vnd.pgrst.plan+json; for="text/csv"`)
 	var plans []struct{ Query, Plan string }
 	if err := json.Unmarshal([]byte(r.body), &plans); err != nil || len(plans) != 1 ||

@@ -34,6 +34,11 @@ All notable changes to FirebirdREST are listed here. The project follows
   encode/decode round trip, so serving a file holds one copy of it in memory.
 
 ### Fixed
+- `Accept` entries with a parameter that has no value, such as the
+  `application/vnd.pgrst.plan+text; for="application/json"; options=;` that postgrest-js sends
+  for `explain()`, were rejected with `406`. The media type is now read even when a parameter
+  is malformed.
+
 - Responses are sent only after the transaction commits. A failed `COMMIT` now returns an error
   instead of a success response, and headers set before an error (such as `Content-Range` on a
   `416`) no longer appear on the error response.

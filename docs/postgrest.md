@@ -3,6 +3,10 @@
 FirebirdREST borrows PostgREST's URL grammar, `Prefer` headers, error shape and security model,
 so PostgREST client libraries and habits mostly carry over. Firebird is not PostgreSQL, though.
 
+[firebirdrest-js](https://github.com/mariuz/firebirdrest-js) wraps supabase-js's query builder
+(`@supabase/postgrest-js`) for FirebirdREST; its test suite is the compatibility check for the
+list below.
+
 ## Same
 
 - `select` with aliases, casts, embedding, `!hint`, `!inner`, spread (`...`) and aggregates.

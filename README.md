@@ -35,6 +35,12 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 - **SQL schemas** on Firebird 6 (experimental): expose several with `db-schemas` and pick one per request with
   `Accept-Profile` / `Content-Profile`, as in PostgREST
 
+## Clients
+
+Any PostgREST client works. [firebirdrest-js](https://github.com/mariuz/firebirdrest-js) packages
+the supabase-js query API (`@supabase/postgrest-js`) for FirebirdREST, with Firebird's operators
+and file downloads, and runs a compatibility suite against this repository's example database.
+
 ## Install
 
 - **Binaries** for Linux, macOS, Windows and FreeBSD (amd64/arm64) are on the

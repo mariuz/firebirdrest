@@ -38,10 +38,7 @@ type statementPlan struct {
 // planFormat returns "text" or "json" when the Accept header asks for a plan.
 func planFormat(r *http.Request) string {
 	for _, part := range strings.Split(r.Header.Get("Accept"), ",") {
-		mt, _, err := mime.ParseMediaType(strings.TrimSpace(part))
-		if err != nil {
-			continue
-		}
+		mt, _ := parseAccept(part)
 		switch mt {
 		case mimePlan, mimePlan + "+text":
 			return "text"
@@ -67,8 +64,7 @@ func (s *Server) startPlan(rc *reqCtx, format string) error {
 	}
 	target := mimeJSON
 	for _, part := range strings.Split(rc.r.Header.Get("Accept"), ",") {
-		if mt, params, err := mime.ParseMediaType(strings.TrimSpace(part)); err == nil &&
-			strings.HasPrefix(mt, mimePlan) && params["for"] != "" {
+		if mt, params := parseAccept(part); strings.HasPrefix(mt, mimePlan) && params["for"] != "" {
 			target = params["for"]
 		}
 	}
@@ -177,6 +173,25 @@ func (p *planCapture) write(w http.ResponseWriter) error {
 	w.WriteHeader(http.StatusOK)
 	_, err := w.Write([]byte(sb.String()))
 	return err
+}
+
+// parseAccept parses one entry of an Accept header. Unlike
+// mime.ParseMediaType it tolerates parameters without a value, which
+// postgrest-js sends for plans ("...plan+text; for=\"application/json\";
+// options=;"), and returns the media type even when a parameter is malformed.
+func parseAccept(part string) (string, map[string]string) {
+	part = strings.TrimSpace(part)
+	if mt, params, err := mime.ParseMediaType(part); err == nil {
+		return mt, params
+	}
+	mt, rest, _ := strings.Cut(part, ";")
+	params := map[string]string{}
+	for _, p := range strings.Split(rest, ";") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(p), "="); ok && v != "" {
+			params[strings.ToLower(strings.TrimSpace(k))] = strings.Trim(strings.TrimSpace(v), `"`)
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(mt)), params
 }
 
 // discardWriter swallows the response of a request run for its plan.

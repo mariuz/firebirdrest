@@ -55,6 +55,8 @@ nav:
       - Schemas (Firebird 6, experimental): references/schemas.md
       - Deployment: references/deployment.md
       - Monitoring: references/observability.md
+      - Stability promise: references/stability.md
+  - Upgrading: upgrading.md
   - Benchmarks: benchmarks.md
   - Differences from PostgREST: postgrest.md
   - Changelog: changelog.md

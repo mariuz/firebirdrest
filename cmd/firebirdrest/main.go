@@ -26,6 +26,7 @@ import (
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
+	checkOnly := flag.Bool("check", false, "load the configuration, report problems and exit without connecting")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: firebirdrest [config-file]\n\nSettings can also be given as FBREST_* environment variables.\n")
 		flag.PrintDefaults()
@@ -46,6 +47,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "config error:", err)
 		os.Exit(2)
 	}
+	if *checkOnly {
+		for _, w := range cfg.Warnings {
+			fmt.Fprintln(os.Stderr, "warning:", w)
+		}
+		fmt.Printf("configuration ok: firebirdrest %s, db-uri %s, %d warning(s)\n", server.Version, config.RedactURI(cfg.DBURI), len(cfg.Warnings))
+		return
+	}
 
 	level := slog.LevelInfo
 	switch cfg.LogLevel {
@@ -58,6 +66,9 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	log.Info("starting firebirdrest", "version", server.Version)
+	for _, w := range cfg.Warnings {
+		log.Warn("configuration", "warning", w)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

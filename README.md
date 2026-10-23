@@ -35,6 +35,13 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 - **SQL schemas** on Firebird 6 (experimental): expose several with `db-schemas` and pick one per request with
   `Accept-Profile` / `Content-Profile`, as in PostgREST
 
+## Upgrading and stability
+
+Upgrades are a new binary and a restart; `firebirdrest -check config` validates a configuration
+first. The [upgrade guide](https://mariuz.github.io/firebirdrest/upgrading/) lists what to check
+per version, and the [stability promise](https://mariuz.github.io/firebirdrest/references/stability/)
+says which interfaces never change without notice.
+
 ## Clients
 
 Any PostgREST client works. [firebirdrest-js](https://github.com/mariuz/firebirdrest-js) packages

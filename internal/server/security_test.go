@@ -129,6 +129,19 @@ func TestConfigBooleans(t *testing.T) {
 	if cfg.ServerTimeout != 60 || cfg.ServerMaxBody != 16 {
 		t.Errorf("defaults: timeout=%d body=%d", cfg.ServerTimeout, cfg.ServerMaxBody)
 	}
+	// -check warnings: no way to authenticate, and the CORS wildcard
+	if len(cfg.Warnings) != 2 {
+		t.Errorf("warnings: %v", cfg.Warnings)
+	}
+	t.Setenv("FBREST_JWT_SECRET", "short")
+	t.Setenv("FBREST_SERVER_CORS_ALLOWED_ORIGINS", "https://app.example")
+	cfg, _ = config.Load("")
+	if len(cfg.Warnings) != 1 || !strings.Contains(cfg.Warnings[0], "shorter than 32") {
+		t.Errorf("short secret warning: %v", cfg.Warnings)
+	}
+	if got := config.RedactURI("user:p@ss@host:3050/db.fdb"); got != "user:***@host:3050/db.fdb" {
+		t.Errorf("RedactURI: %s", got)
+	}
 	_ = http.StatusOK
 }
 

@@ -95,7 +95,13 @@ Boolean settings left empty in the config file (`admin-pprof =`) keep their defa
 ```
 firebirdrest [config-file]
 firebirdrest -version
+firebirdrest -check [config-file]
 ```
+
+`-check` loads the configuration, prints warnings (deprecated settings, a short `jwt-secret`,
+the CORS wildcard, no way to authenticate) and exits with status 0, or with status 2 and the
+error when a setting is unknown or invalid. Nothing is connected. Use it before a rollout; see
+[Upgrading](../upgrading.md). The same warnings are logged at startup.
 
 FirebirdREST retries the database connection with back-off until it succeeds, so it can start
 before Firebird. It stops gracefully on `SIGINT`/`SIGTERM` and reloads the schema cache on

@@ -51,6 +51,26 @@ type Config struct {
 	OpenAPIProxyURI          string
 	OpenAPIMode              string // follow-privileges, ignore-privileges or disabled
 	LogLevel                 string
+	// Warnings are deprecation notices and advice found while loading; the
+	// server logs them at startup and -check prints them.
+	Warnings []string
+}
+
+// deprecated maps old setting keys to their replacements. An old key keeps
+// working for at least one minor version, with a warning.
+var deprecated = map[string]string{}
+
+// RedactURI hides the password of a db-uri for logs and messages.
+func RedactURI(uri string) string {
+	at := strings.LastIndex(uri, "@")
+	if at < 0 {
+		return uri
+	}
+	cred := uri[:at]
+	if i := strings.Index(cred, ":"); i >= 0 {
+		return cred[:i] + ":***" + uri[at:]
+	}
+	return uri
 }
 
 // keys maps config-file keys to environment variable names.
@@ -92,6 +112,7 @@ var keys = map[string]string{
 // Load reads the optional config file, then lets environment variables override it.
 func Load(path string) (*Config, error) {
 	vals := map[string]string{}
+	var warnings []string
 	if path != "" {
 		f, err := os.Open(path)
 		if err != nil {
@@ -111,6 +132,10 @@ func Load(path string) (*Config, error) {
 				return nil, fmt.Errorf("%s:%d: expected key = value", path, line)
 			}
 			k = strings.TrimSpace(k)
+			if repl, old := deprecated[k]; old {
+				warnings = append(warnings, fmt.Sprintf("%s:%d: %s is deprecated, use %s", path, line, k, repl))
+				k = repl
+			}
 			env, known := keys[k]
 			if !known {
 				return nil, fmt.Errorf("%s:%d: unknown setting %q", path, line, k)
@@ -239,6 +264,17 @@ func Load(path string) (*Config, error) {
 	if c.DBURI == "" {
 		return nil, fmt.Errorf("db-uri (FBREST_DB_URI) is required, e.g. user:password@localhost:3050/var/lib/firebird/data/app.fdb")
 	}
+	if c.JWTSecret == "" && c.JWTJWKSURL == "" && c.DBAnonRole == "" {
+		warnings = append(warnings, "neither jwt-secret, jwt-jwks-url nor db-anon-role is set: every request will be refused")
+	}
+	if c.JWTSecret != "" && !strings.HasPrefix(c.JWTSecret, "@") && !strings.HasPrefix(strings.TrimSpace(c.JWTSecret), "-----BEGIN") &&
+		!strings.HasPrefix(strings.TrimSpace(c.JWTSecret), "{") && len(c.JWTSecret) < 32 {
+		warnings = append(warnings, "jwt-secret is shorter than 32 characters: use a longer random secret")
+	}
+	if c.CORSOrigins == "*" {
+		warnings = append(warnings, "server-cors-allowed-origins is \"*\": any website may call the API from a browser (without credentials)")
+	}
+	c.Warnings = warnings
 	return c, nil
 }
 

@@ -5,6 +5,15 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- A [stability promise](https://mariuz.github.io/firebirdrest/references/stability/) saying
+  which interfaces are stable, which are experimental, and how deprecations and behaviour
+  changes are announced, and an [upgrade guide](https://mariuz.github.io/firebirdrest/upgrading/)
+  with the changes to check for each version.
+- `firebirdrest -check [config-file]` validates the configuration and prints warnings without
+  connecting; the warnings are also logged at startup. Deprecated setting names, when there
+  are any, keep working for a minor version with a warning.
+
 ## [0.3.0] - 2026-10-23
 
 Production readiness: Prometheus metrics, `Server-Timing`, JWKS keys from identity providers

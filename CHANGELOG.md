@@ -5,6 +5,26 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-23
+
+Production readiness: Prometheus metrics, `Server-Timing`, JWKS keys from identity providers
+with a token cache, single values and files in any media type, raw bodies for RPC, and the fixes
+of a security review. A JavaScript client with the supabase-js API,
+[firebirdrest-js](https://github.com/mariuz/firebirdrest-js), checks compatibility in CI.
+
+Behaviour changes to check before upgrading:
+
+- `server-cors-allowed-origins = "*"` no longer sends `Access-Control-Allow-Credentials`; list
+  the origins explicitly if browsers must send credentials.
+- `GET /` describes only what the caller's role is granted; set
+  `openapi-mode = "ignore-privileges"` for the old document.
+- Requests are limited to 60 seconds and 16 MB bodies (`server-request-timeout`,
+  `server-max-body-size`), and `and=`/`or=` nesting to 16 levels, `in.()` to 1000 values.
+- Permission errors no longer include Firebird's "Effective user is ..." line, and unexpected
+  errors return a generic message (the cause is logged).
+- Pool and statement cache metrics label roles in upper case.
+- Responses carry `X-Content-Type-Options: nosniff` and a sandboxing `Content-Security-Policy`.
+
 ### Security
 
 A review of the SQL generation, authentication and HTTP surface found no injection or
@@ -207,7 +227,8 @@ First release. Supports Firebird 3, 4 and 5.
 - `admin-pprof` serves Go profiling endpoints on the admin port.
 - Release workflow can be started from GitHub (Actions, then Release, then Run workflow).
 
-[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/mariuz/firebirdrest/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mariuz/firebirdrest/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/mariuz/firebirdrest/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/mariuz/firebirdrest/compare/v0.1.0...v0.1.1

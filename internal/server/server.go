@@ -2,9 +2,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -163,11 +165,16 @@ func (s *Server) pool(ctx context.Context, role string) (*rolePool, error) {
 	if role == "" {
 		return s.basep, nil
 	}
+	// Firebird folds unquoted role names to upper case, so "web_user" and
+	// "WEB_USER" are one role and share a pool
+	key := strings.ToUpper(role)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if p, ok := s.pools[role]; ok {
+	if p, ok := s.pools[key]; ok {
+		s.mu.Unlock()
 		return p, nil
 	}
+	s.mu.Unlock()
+	// opened without the lock: the round trips must not stall other roles
 	p, err := openPool(s.cfg.DBURI, role, s.cfg.DBPool)
 	if err != nil {
 		return nil, err
@@ -184,7 +191,16 @@ func (s *Server) pool(ctx context.Context, role string) (*rolePool, error) {
 			Hint:    fmt.Sprintf("GRANT %s TO USER <authenticator>", role)}
 	}
 	rp := s.newRolePool(p)
-	s.pools[role] = rp
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if other, ok := s.pools[key]; ok { // another request opened it meanwhile
+		if rp.cache != nil {
+			rp.cache.close()
+		}
+		p.Close()
+		return other, nil
+	}
+	s.pools[key] = rp
 	return rp, nil
 }
 
@@ -209,6 +225,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	rw := &statusWriter{ResponseWriter: w, status: 200}
 	errCode := ""
+	// responses are data, never documents: stop browsers from sniffing a
+	// type or running anything a value may contain
+	rw.Header().Set("X-Content-Type-Options", "nosniff")
+	rw.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	if s.cfg.ServerTimeout > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.cfg.ServerTimeout)*time.Second)
+		defer cancel()
+		r = r.WithContext(ctx)
+	}
 	defer func() {
 		if rec := recover(); rec != nil {
 			s.log.Error("panic", "err", rec, "path", r.URL.Path)
@@ -228,6 +253,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := s.handle(rw, r); err != nil {
 		e := toAPIError(err)
 		errCode = e.Code
+		if e.Status >= 500 {
+			// the client gets a generic message; the cause goes to the log
+			s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+		}
 		writeError(rw, e)
 	}
 }
@@ -237,18 +266,26 @@ func (s *Server) cors(w http.ResponseWriter, r *http.Request) {
 	if origin == "" || s.cfg.CORSOrigins == "" {
 		return
 	}
-	allowed := s.cfg.CORSOrigins == "*"
-	for _, o := range strings.Split(s.cfg.CORSOrigins, ",") {
-		if strings.TrimSpace(o) == origin {
-			allowed = true
-		}
-	}
-	if !allowed {
-		return
-	}
 	h := w.Header()
-	h.Set("Access-Control-Allow-Origin", origin)
-	h.Set("Access-Control-Allow-Credentials", "true")
+	if s.cfg.CORSOrigins == "*" {
+		// any origin, without credentials: a reflected origin plus
+		// Allow-Credentials would let any site read responses with a
+		// browser-stored credential
+		h.Set("Access-Control-Allow-Origin", "*")
+	} else {
+		allowed := false
+		for _, o := range strings.Split(s.cfg.CORSOrigins, ",") {
+			if strings.TrimSpace(o) == origin {
+				allowed = true
+			}
+		}
+		if !allowed {
+			return
+		}
+		h.Set("Access-Control-Allow-Origin", origin)
+		h.Set("Access-Control-Allow-Credentials", "true")
+		h.Add("Vary", "Origin")
+	}
 	h.Set("Access-Control-Expose-Headers", "Content-Encoding, Content-Location, Content-Range, Content-Type, Date, Location, Server, Transfer-Encoding, Range-Unit, Preference-Applied, Content-Profile")
 	if r.Method == http.MethodOptions {
 		h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS, HEAD")
@@ -278,11 +315,14 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			return &query.Error{Status: 405, Code: "FBRST117", Message: "only GET is allowed on /"}
 		}
-		return s.openAPI(w, r, sc)
+		return s.serveOpenAPI(w, r, sc)
 	}
 
 	rc := &reqCtx{w: w, r: r, sc: sc, prefer: parsePrefer(r.Header.Values("Prefer"))}
 	if err := rc.prefer.check(); err != nil {
+		return err
+	}
+	if err := s.readRequestBody(rc); err != nil {
 		return err
 	}
 	jwtStart := time.Now()
@@ -361,6 +401,37 @@ func (s *Server) route(rc *reqCtx, parts []string) error {
 		return s.withTx(rc, readOnly(r.Method), fn)
 	}
 	return &query.Error{Status: 404, Code: "FBRST125", Message: "invalid path"}
+}
+
+// readRequestBody reads the body before any transaction starts, so a slow
+// client can't hold a connection while sending, and bounds its size.
+func (s *Server) readRequestBody(rc *reqCtx) error {
+	r := rc.r
+	if r.Body == nil || r.ContentLength == 0 || r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return nil
+	}
+	max := int64(s.cfg.ServerMaxBody) << 20
+	if max <= 0 {
+		max = 16 << 20 // the config default, for a Config built by hand
+	}
+	if r.ContentLength > max {
+		return bodyTooLarge(max)
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, max+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(data)) > max {
+		return bodyTooLarge(max)
+	}
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	r.ContentLength = int64(len(data))
+	return nil
+}
+
+func bodyTooLarge(max int64) error {
+	return &query.Error{Status: 413, Code: "FBRST134",
+		Message: fmt.Sprintf("the request body is larger than %d MB (server-max-body-size)", max>>20)}
 }
 
 func readOnly(method string) bool { return method == http.MethodGet || method == http.MethodHead }

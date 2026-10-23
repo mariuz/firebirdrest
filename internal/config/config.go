@@ -41,11 +41,15 @@ type Config struct {
 	JWTRoleClaim             string // dotted path, e.g. "role" or "app_metadata.role"
 	ServerHost               string
 	ServerPort               int
-	AdminPort                int  // 0 = disabled; serves /live and /ready
-	AdminPprof               bool // also serve Go profiling endpoints at /debug/pprof/ on the admin port
-	ServerTiming             bool // add a Server-Timing header to responses
+	ServerTimeout            int    // seconds a request may take, including reading its body (0 = no limit)
+	ServerMaxBody            int    // largest request body, in MB
+	AdminHost                string // listen address of the admin server ("" = server-host)
+	AdminPort                int    // 0 = disabled; serves /live and /ready
+	AdminPprof               bool   // also serve Go profiling endpoints at /debug/pprof/ on the admin port
+	ServerTiming             bool   // add a Server-Timing header to responses
 	CORSOrigins              string
 	OpenAPIProxyURI          string
+	OpenAPIMode              string // follow-privileges, ignore-privileges or disabled
 	LogLevel                 string
 }
 
@@ -73,11 +77,15 @@ var keys = map[string]string{
 	"jwt-role-claim-key":          "FBREST_JWT_ROLE_CLAIM_KEY",
 	"server-host":                 "FBREST_SERVER_HOST",
 	"server-port":                 "FBREST_SERVER_PORT",
+	"server-request-timeout":      "FBREST_SERVER_REQUEST_TIMEOUT",
+	"server-max-body-size":        "FBREST_SERVER_MAX_BODY_SIZE",
+	"admin-server-host":           "FBREST_ADMIN_SERVER_HOST",
 	"server-timing-enabled":       "FBREST_SERVER_TIMING_ENABLED",
 	"admin-server-port":           "FBREST_ADMIN_SERVER_PORT",
 	"admin-pprof":                 "FBREST_ADMIN_PPROF",
 	"server-cors-allowed-origins": "FBREST_SERVER_CORS_ALLOWED_ORIGINS",
 	"openapi-server-proxy-uri":    "FBREST_OPENAPI_SERVER_PROXY_URI",
+	"openapi-mode":                "FBREST_OPENAPI_MODE",
 	"log-level":                   "FBREST_LOG_LEVEL",
 }
 
@@ -128,6 +136,14 @@ func Load(path string) (*Config, error) {
 		}
 		return def
 	}
+	// an empty value keeps the default: "admin-pprof =" must not enable pprof
+	getBool := func(env string, def bool) bool {
+		s := strings.TrimSpace(get(env, ""))
+		if s == "" {
+			return def
+		}
+		return isTrue(s)
+	}
 	geti := func(env string, def int) (int, error) {
 		s := get(env, "")
 		if s == "" {
@@ -149,6 +165,7 @@ func Load(path string) (*Config, error) {
 		JWTJWKSURL:      get("FBREST_JWT_JWKS_URL", ""),
 		JWTRoleClaim:    get("FBREST_JWT_ROLE_CLAIM_KEY", "role"),
 		ServerHost:      get("FBREST_SERVER_HOST", "0.0.0.0"),
+		AdminHost:       get("FBREST_ADMIN_SERVER_HOST", ""),
 		CORSOrigins:     get("FBREST_SERVER_CORS_ALLOWED_ORIGINS", "*"),
 		OpenAPIProxyURI: get("FBREST_OPENAPI_SERVER_PROXY_URI", ""),
 		LogLevel:        get("FBREST_LOG_LEVEL", "info"),
@@ -187,17 +204,32 @@ func Load(path string) (*Config, error) {
 	if c.AdminPort, err = geti("FBREST_ADMIN_SERVER_PORT", 0); err != nil {
 		return nil, err
 	}
-	c.DBSafeUpdates = isTrue(get("FBREST_DB_SAFE_UPDATES", "true"))
-	c.DBAggregates = isTrue(get("FBREST_DB_AGGREGATES_ENABLED", "true"))
-	c.DBPlan = isTrue(get("FBREST_DB_PLAN_ENABLED", "false"))
+	if c.ServerTimeout, err = geti("FBREST_SERVER_REQUEST_TIMEOUT", 60); err != nil {
+		return nil, err
+	}
+	if c.ServerMaxBody, err = geti("FBREST_SERVER_MAX_BODY_SIZE", 16); err != nil {
+		return nil, err
+	}
+	if c.ServerMaxBody < 1 {
+		return nil, fmt.Errorf("server-max-body-size must be at least 1 (MB), got %d", c.ServerMaxBody)
+	}
+	c.DBSafeUpdates = getBool("FBREST_DB_SAFE_UPDATES", true)
+	c.DBAggregates = getBool("FBREST_DB_AGGREGATES_ENABLED", true)
+	c.DBPlan = getBool("FBREST_DB_PLAN_ENABLED", false)
 	for _, name := range strings.Split(get("FBREST_DB_SCHEMAS", ""), ",") {
 		if name = strings.TrimSpace(name); name != "" {
 			c.DBSchemas = append(c.DBSchemas, name)
 		}
 	}
-	c.JWTSecretIsBase64 = isTrue(get("FBREST_JWT_SECRET_IS_BASE64", "false"))
-	c.ServerTiming = isTrue(get("FBREST_SERVER_TIMING_ENABLED", "false"))
-	c.AdminPprof = isTrue(get("FBREST_ADMIN_PPROF", "false"))
+	c.JWTSecretIsBase64 = getBool("FBREST_JWT_SECRET_IS_BASE64", false)
+	c.ServerTiming = getBool("FBREST_SERVER_TIMING_ENABLED", false)
+	c.AdminPprof = getBool("FBREST_ADMIN_PPROF", false)
+	c.OpenAPIMode = strings.ToLower(get("FBREST_OPENAPI_MODE", "follow-privileges"))
+	switch c.OpenAPIMode {
+	case "follow-privileges", "ignore-privileges", "disabled":
+	default:
+		return nil, fmt.Errorf("openapi-mode must be follow-privileges, ignore-privileges or disabled, got %q", c.OpenAPIMode)
+	}
 	c.DBRequestContext = strings.ToLower(get("FBREST_DB_REQUEST_CONTEXT", "auto"))
 	switch c.DBRequestContext {
 	case "auto", "always", "never":

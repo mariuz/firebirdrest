@@ -73,15 +73,22 @@ Don't add `role=` yourself: FirebirdREST sets the role per request.
 |---|---|---|---|
 | `server-host` | `FBREST_SERVER_HOST` | `0.0.0.0` | listen address |
 | `server-port` | `FBREST_SERVER_PORT` | `3000` | API port |
-| `server-cors-allowed-origins` | `FBREST_SERVER_CORS_ALLOWED_ORIGINS` | `*` | comma-separated origins allowed by CORS; empty disables CORS headers |
+| `server-request-timeout` | `FBREST_SERVER_REQUEST_TIMEOUT` | `60` | seconds a request may take to arrive and to be handled; `0` disables ([details](security.md#request-limits)) |
+| `server-max-body-size` | `FBREST_SERVER_MAX_BODY_SIZE` | `16` | largest request body, in MB (`413` above it) |
+| `server-cors-allowed-origins` | `FBREST_SERVER_CORS_ALLOWED_ORIGINS` | `*` | comma-separated origins allowed by CORS; `*` allows any origin without credentials; empty disables CORS headers |
 | `openapi-server-proxy-uri` | `FBREST_OPENAPI_SERVER_PROXY_URI` | request host | public URL shown in the OpenAPI document |
+| `openapi-mode` | `FBREST_OPENAPI_MODE` | `follow-privileges` | what `GET /` describes: only what the caller's role is granted (`follow-privileges`), everything (`ignore-privileges`), or nothing (`disabled`, `404`) |
 | `server-timing-enabled` | `FBREST_SERVER_TIMING_ENABLED` | `false` | add a `Server-Timing` header to responses ([details](observability.md#server-timing)) |
 | `admin-server-port` | `FBREST_ADMIN_SERVER_PORT` | `0` (off) | admin server: `GET /live`, `GET /ready`, `POST /reload`, `GET /metrics` |
+| `admin-server-host` | `FBREST_ADMIN_SERVER_HOST` | `server-host` | listen address of the admin server, e.g. `127.0.0.1` |
 | `admin-pprof` | `FBREST_ADMIN_PPROF` | `false` | serve Go profiling at `/debug/pprof/` on the admin port |
 | `log-level` | `FBREST_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; `info` logs every request |
 
-The admin server listens on `server-host` too. Don't expose it publicly: anyone who can reach it
-can reload the schema cache, read the metrics, and with `admin-pprof` read profiling data.
+The admin server has no authentication. Don't expose it publicly: anyone who can reach it can
+reload the schema cache, read the metrics, and with `admin-pprof` read profiling data. Bind it to
+a private interface with `admin-server-host`, or keep it off the public port mapping.
+
+Boolean settings left empty in the config file (`admin-pprof =`) keep their default.
 
 ## Command line
 

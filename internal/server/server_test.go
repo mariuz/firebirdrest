@@ -68,8 +68,21 @@ func startServerS(t *testing.T, cfg *config.Config) (*httptest.Server, *Server, 
 		return nil, nil, err
 	}
 	ts := httptest.NewServer(s)
-	t.Cleanup(func() { ts.Close(); s.Close() })
+	serversByURL[ts.URL] = s
+	t.Cleanup(func() { ts.Close(); s.Close(); delete(serversByURL, ts.URL) })
 	return ts, s, nil
+}
+
+var serversByURL = map[string]*Server{}
+
+// serverOf returns the Server behind a test server.
+func serverOf(t *testing.T, ts *httptest.Server) *Server {
+	t.Helper()
+	s := serversByURL[ts.URL]
+	if s == nil {
+		t.Fatal("unknown test server")
+	}
+	return s
 }
 
 func token(t *testing.T, claims jwt.MapClaims) string {
@@ -261,7 +274,8 @@ func TestFormats(t *testing.T) {
 		t.Errorf("singular with many rows: %d", r.status)
 	}
 	r = do(t, ts, "GET", "/", "")
-	if r.status != 200 || !strings.Contains(r.body, `"/rpc/place_order"`) {
+	// anonymous: the document lists what web_anon may use
+	if r.status != 200 || !strings.Contains(r.body, `"/rpc/add_vat"`) || strings.Contains(r.body, `"/rpc/place_order"`) {
 		t.Errorf("openapi: %d", r.status)
 	}
 }
@@ -430,7 +444,7 @@ func TestStatementCacheUnderLoad(t *testing.T) {
 	for e := range errs {
 		t.Error(e)
 	}
-	rp := s.pools["web_anon"]
+	rp := s.pools["WEB_ANON"] // pools are keyed by the upper-cased role
 	rp.cache.mu.Lock()
 	n := rp.cache.ll.Len()
 	rp.cache.mu.Unlock()

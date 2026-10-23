@@ -118,16 +118,31 @@ func main() {
 			admin.HandleFunc("/debug/pprof/trace", pprof.Trace)
 		}
 		go func() {
-			addr := net.JoinHostPort(cfg.ServerHost, strconv.Itoa(cfg.AdminPort))
+			host := cfg.AdminHost
+			if host == "" {
+				host = cfg.ServerHost
+			}
+			addr := net.JoinHostPort(host, strconv.Itoa(cfg.AdminPort))
 			log.Info("admin server listening", "addr", addr)
-			if err := http.ListenAndServe(addr, admin); err != nil {
+			as := &http.Server{Addr: addr, Handler: admin, ReadHeaderTimeout: 10 * time.Second,
+				ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10}
+			if err := as.ListenAndServe(); err != nil {
 				log.Error("admin server stopped", "err", err)
 			}
 		}()
 	}
 
 	addr := net.JoinHostPort(cfg.ServerHost, strconv.Itoa(cfg.ServerPort))
-	hs := &http.Server{Addr: addr, Handler: srv, ReadHeaderTimeout: 10 * time.Second}
+	timeout := time.Duration(cfg.ServerTimeout) * time.Second
+	hs := &http.Server{Addr: addr, Handler: srv,
+		ReadHeaderTimeout: 10 * time.Second,
+		// a request may take server-request-timeout to arrive and as long again to
+		// be answered; the handler also cancels its work at that deadline
+		ReadTimeout:    timeout,
+		WriteTimeout:   2 * timeout,
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 64 << 10,
+	}
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)

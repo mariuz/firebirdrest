@@ -198,6 +198,47 @@ A banned user's requests then fail with
 - `PATCH` and `DELETE` without filters are refused (`db-safe-updates`).
 - `GET` and `HEAD` run in read-only transactions.
 - `db-max-rows` caps the rows a single read can return.
-- CORS is controlled with `server-cors-allowed-origins`.
 - Identifiers from the URL are checked against the schema cache and always quoted; values are
   always sent as parameters, never inlined into SQL.
+- Error responses never carry the database login, host or internal error text: Firebird's
+  "Effective user is ..." line is removed, and unexpected errors return a generic message while
+  the cause goes to the log.
+- The OpenAPI document at `/` lists only what the caller's role may use (`openapi-mode`).
+
+### Request limits
+
+A request is bounded in time and size, so one client can't tie up the server:
+
+| | Limit | Setting |
+|---|---|---|
+| Time to send and handle a request | 60 s | `server-request-timeout` (`503 FBRST002` when exceeded) |
+| Request body | 16 MB | `server-max-body-size` (`413 FBRST134`) |
+| Request line and headers | 64 KB | fixed |
+| `and=`/`or=` nesting | 16 levels | fixed (`400`) |
+| Values in one `in.()` filter | 1000 | fixed (`400`) |
+| Objects in `Prefer: params=multiple-objects` for a selectable procedure | 200 | fixed (`400 FBRST128`) |
+
+The body is read in full before the transaction starts, so a slow client never holds a database
+connection while sending.
+
+### CORS
+
+`server-cors-allowed-origins = "*"` (the default) answers any origin with
+`Access-Control-Allow-Origin: *` and no credentials, which is enough for bearer tokens set by
+JavaScript. To let browsers send credentials (cookies, HTTP auth from a proxy in front), list
+the origins explicitly: each is reflected with `Access-Control-Allow-Credentials: true` and
+`Vary: Origin`. An empty value turns the CORS headers off.
+
+### Responses as data
+
+Every response carries `X-Content-Type-Options: nosniff` and
+`Content-Security-Policy: default-src 'none'; sandbox`, so a browser never treats a value stored
+in the database as a page of the API's origin. A [single value](../api/formats-errors.md#single-values-and-files)
+requested as `text/html`, SVG, XML, JavaScript or PDF is sent with `Content-Disposition:
+attachment`: it downloads instead of rendering.
+
+### Roles
+
+Role names from tokens are folded to upper case, as Firebird folds unquoted identifiers, so
+`web_user` and `WEB_USER` share one connection pool. Only roles the authenticator is granted get
+a pool; the check happens when the pool is opened.

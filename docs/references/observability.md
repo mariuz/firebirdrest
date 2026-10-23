@@ -38,7 +38,7 @@ In Kubernetes, scrape the admin port of each pod; don't route it through the pub
 ### Connection pools and statement caches
 
 Each Firebird role has its own pool and [statement cache](configuration.md#database); these
-metrics have a `role` label. The pool with an empty `role` is the connection without a role that
+metrics have a `role` label, with the role name in upper case as Firebird stores it. The pool with an empty `role` is the connection without a role that
 reads the schema cache.
 
 | Metric | Type | |

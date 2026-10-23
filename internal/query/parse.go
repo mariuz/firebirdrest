@@ -232,6 +232,9 @@ func ParseFilter(field, raw string) (*Filter, error) {
 		inner := v[1 : len(v)-1]
 		if strings.TrimSpace(inner) != "" {
 			for _, item := range splitTop(inner, ',') {
+				if len(f.List) >= maxInList {
+					return nil, badRequest("FBRST102", "in.() has more than %d values", maxInList)
+				}
 				f.List = append(f.List, unquote(strings.TrimSpace(item)))
 			}
 		}
@@ -249,7 +252,22 @@ func ParseFilter(field, raw string) (*Filter, error) {
 }
 
 // ParseLogic parses or=(a.eq.1,and(b.gt.2,c.lt.3)).
+// maxInList bounds the values of an in.() filter: each becomes a parameter,
+// and a statement with thousands of them brings the connection down.
+const maxInList = 1000
+
+// maxLogicDepth bounds the nesting of and=/or= trees: each level re-scans its
+// text, so unbounded nesting costs quadratic time for a tiny request.
+const maxLogicDepth = 16
+
 func ParseLogic(op string, negate bool, raw string) (Node, error) {
+	return parseLogic(op, negate, raw, 1)
+}
+
+func parseLogic(op string, negate bool, raw string, depth int) (Node, error) {
+	if depth > maxLogicDepth {
+		return Node{}, badRequest("FBRST100", "%s= condition nested deeper than %d levels", op, maxLogicDepth)
+	}
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "(") || !strings.HasSuffix(raw, ")") {
 		return Node{}, badRequest("FBRST100", "%s= value must be wrapped in parentheses", op)
@@ -267,7 +285,7 @@ func ParseLogic(op string, negate bool, raw string) (Node, error) {
 		}
 		if strings.HasPrefix(body, "and(") || strings.HasPrefix(body, "or(") {
 			i := strings.IndexByte(body, '(')
-			child, err := ParseLogic(body[:i], neg, body[i:])
+			child, err := parseLogic(body[:i], neg, body[i:], depth+1)
 			if err != nil {
 				return Node{}, err
 			}

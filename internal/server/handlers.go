@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -42,7 +43,9 @@ func applyRange(r *http.Request, n *query.ReadNode, p *query.Params) error {
 	}
 	if strings.TrimSpace(to) != "" {
 		end, err := strconv.Atoi(strings.TrimSpace(to))
-		if err != nil || end < start {
+		// end - start + 1 must not overflow: a huge end would turn the
+		// limit negative, which means "no limit"
+		if err != nil || end < start || end-start >= math.MaxInt32 {
 			return &query.Error{Status: 416, Code: "FBRST103", Message: "invalid Range header"}
 		}
 		if l := end - start + 1; n.Limit < 0 || l < n.Limit {

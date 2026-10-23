@@ -35,6 +35,9 @@ curl 'localhost:3000/rpc/add_vat?amount=100' -H 'Accept: text/plain'
   columns as their text; numbers, booleans and dates as their JSON text (`9.99`, `true`).
   `text/*`, `+json` and `+xml` types get `; charset=utf-8`.
 - `NULL` gives an empty `204`.
+- Types a browser would run or render as a document (`text/html`, SVG, XML, JavaScript, PDF) are
+  sent as downloads (`Content-Disposition: attachment`), so a stored value can never run as a
+  page of the API.
 - More than one row gives `406` (`FBRST116`), more than one column `406` (`FBRST107`).
 - `application/octet-stream` works for any column. A column's own type (`image/png`,
   `application/pdf`) is handy to serve files straight from the database; keep the type in another
@@ -100,9 +103,12 @@ Here `price` has no index, so the books are read with a full scan.
 
 ## OpenAPI
 
-`GET /` returns an [OpenAPI 3](https://spec.openapis.org/oas/v3.0.3) document describing every
-table, view, procedure and function, with their columns, types, keys and computed fields. Point
-Swagger UI, Postman or a code generator at it:
+`GET /` returns an [OpenAPI 3](https://spec.openapis.org/oas/v3.0.3) document describing the
+tables, views, procedures and functions the caller's role may use, with their columns, types,
+keys and computed fields, and only the methods the role is granted (`SELECT` → `get`, `INSERT` →
+`post`, ...). Send the request with the token whose view you want; without one, the anonymous
+role's. `openapi-mode = "ignore-privileges"` describes everything instead, and `"disabled"`
+turns `/` off. Point Swagger UI, Postman or a code generator at it:
 
 ```sh
 curl localhost:3000/ > openapi.json
@@ -146,6 +152,7 @@ Errors are JSON objects in PostgREST's shape:
 |---|---|
 | `FBRST000` | unexpected server error (see the log) |
 | `FBRST001` | the database can't be reached (`503`) |
+| `FBRST002` | the request took longer than `server-request-timeout` (`503`) |
 | `FBRST100` | filter syntax or unknown operator |
 | `FBRST101` | `order` syntax |
 | `FBRST102` | invalid body or parameter value |
@@ -170,6 +177,7 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST129` | `params=single-object` on a routine without exactly one text parameter |
 | `FBRST130` | an unknown or invalid preference with `Prefer: handling=strict` |
 | `FBRST131` | a `PATCH`/`DELETE` would affect more rows than `Prefer: max-affected` |
+| `FBRST134` | the request body is larger than `server-max-body-size` (`413`) |
 | `FBRST133` | a raw request body (`text/plain`, `application/octet-stream`...) sent to a routine that doesn't have exactly one parameter |
 | `FBRST132` | a query plan was asked for a method other than `GET`/`HEAD` |
 | `FBRST200` | no relationship between the tables |

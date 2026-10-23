@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql/driver"
 	"encoding/base64"
 	"encoding/csv"
@@ -250,12 +251,29 @@ func writeRaw(rc *reqCtx, status int, mt string, rows []*query.Obj, col *schema.
 	default:
 		body = query.AppendJSON(nil, v)
 	}
+	if activeType(mt) {
+		// a value served as HTML, SVG or script must never run in the API's
+		// origin: browsers download it instead
+		rc.w.Header().Set("Content-Disposition", "attachment")
+	}
 	if strings.HasPrefix(mt, "text/") || strings.HasSuffix(mt, "+json") || strings.HasSuffix(mt, "+xml") || mt == "application/xml" {
 		mt += "; charset=utf-8"
 	}
 	rc.w.Header().Set("Content-Type", mt)
 	writeBody(rc, status, "", body)
 	return nil
+}
+
+// activeType reports media types a browser would render as a document that
+// can run script or load resources.
+func activeType(mt string) bool {
+	switch mt {
+	case "text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml",
+		"text/javascript", "application/javascript", "application/ecmascript", "text/ecmascript",
+		"application/pdf", "text/css", "application/xslt+xml":
+		return true
+	}
+	return strings.HasSuffix(mt, "+xml") || strings.HasSuffix(mt, "+html")
 }
 
 // writeRows writes a result set in the negotiated format.
@@ -398,7 +416,7 @@ func toAPIError(err error) *query.Error {
 	var fe *firebirdsql.FbError
 	if errors.As(err, &fe) {
 		msg := strings.TrimSpace(fe.Message)
-		e := &query.Error{Status: 400, Code: fe.SQLState, Message: firstLine(msg), Details: rest(msg)}
+		e := &query.Error{Status: 400, Code: fe.SQLState, Message: firstLine(msg), Details: withoutIdentity(rest(msg))}
 		if e.Code == "" {
 			e.Code = strconv.Itoa(int(fe.SQLCode))
 		}
@@ -429,10 +447,26 @@ func toAPIError(err error) *query.Error {
 	}
 	var ne net.Error
 	if errors.As(err, &ne) || errors.Is(err, driver.ErrBadConn) || errors.Is(err, io.EOF) {
-		return &query.Error{Status: 503, Code: "FBRST001", Message: "the database is not reachable",
-			Details: err.Error()}
+		// no details: they would name the database host
+		return &query.Error{Status: 503, Code: "FBRST001", Message: "the database is not reachable"}
 	}
-	return &query.Error{Status: 500, Code: "FBRST000", Message: err.Error()}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &query.Error{Status: 503, Code: "FBRST002", Message: "the request took longer than server-request-timeout"}
+	}
+	// the cause is logged by the caller; clients get nothing internal
+	return &query.Error{Status: 500, Code: "FBRST000", Message: "internal server error"}
+}
+
+// withoutIdentity drops the "Effective user is X" line Firebird adds to
+// permission errors: the database login is nobody's business.
+func withoutIdentity(details string) string {
+	var keep []string
+	for _, l := range strings.Split(details, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(l), "Effective user is") {
+			keep = append(keep, l)
+		}
+	}
+	return strings.Join(keep, "\n")
 }
 
 // plainName turns Firebird 6's schema-qualified "PUBLIC"."NAME" into NAME,

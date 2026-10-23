@@ -1,7 +1,11 @@
 package server
 
 import (
+	"context"
+	"database/sql"
+	"github.com/mariuz/firebirdrest/internal/query"
 	"net/http"
+	"strings"
 
 	"github.com/mariuz/firebirdrest/internal/schema"
 )
@@ -96,7 +100,92 @@ func filterParams(r *schema.Relation) []any {
 	return out
 }
 
-func (s *Server) openAPI(w http.ResponseWriter, r *http.Request, sc *schema.Schema) error {
+// serveOpenAPI answers GET / according to openapi-mode: the document lists
+// what the caller's role may use (follow-privileges), everything in the
+// schema cache (ignore-privileges), or nothing (disabled).
+func (s *Server) serveOpenAPI(w http.ResponseWriter, r *http.Request, sc *schema.Schema) error {
+	mode := s.cfg.OpenAPIMode
+	if mode == "" {
+		mode = "follow-privileges"
+	}
+	if mode == "disabled" {
+		return &query.Error{Status: 404, Code: "FBRST125", Message: "the OpenAPI document is disabled (openapi-mode)"}
+	}
+	var allow *privileges
+	if mode == "follow-privileges" {
+		rc := &reqCtx{w: w, r: r, sc: sc}
+		if err := s.authenticate(rc); err != nil {
+			return err
+		}
+		p, err := s.pool(r.Context(), rc.role)
+		if err != nil {
+			return err
+		}
+		if allow, err = loadPrivileges(r.Context(), p.db, rc.role); err != nil {
+			return err
+		}
+	}
+	return s.openAPI(w, r, sc, allow)
+}
+
+// privileges holds what a role may do, from RDB$USER_PRIVILEGES: the
+// privilege letters (S, I, U, D) per table or view, and the procedures,
+// functions and packages it may execute. Grants are matched by object name
+// only; on Firebird 6 a same-named object in another schema would count too,
+// which can only over-list, never grant anything.
+type privileges struct {
+	relations map[string]string
+	routines  map[string]bool
+}
+
+func loadPrivileges(ctx context.Context, db *sql.DB, role string) (*privileges, error) {
+	rows, err := db.QueryContext(ctx, `SELECT RDB$PRIVILEGE, RDB$OBJECT_TYPE, TRIM(RDB$RELATION_NAME)
+		FROM RDB$USER_PRIVILEGES
+		WHERE RDB$FIELD_NAME IS NULL AND (UPPER(RDB$USER) = UPPER(?) OR RDB$USER = 'PUBLIC' OR RDB$USER = CURRENT_USER)`, role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	p := &privileges{relations: map[string]string{}, routines: map[string]bool{}}
+	for rows.Next() {
+		var priv, name string
+		var typ int
+		if err := rows.Scan(&priv, &typ, &name); err != nil {
+			return nil, err
+		}
+		priv = strings.TrimSpace(priv)
+		switch typ {
+		case 0: // table or view
+			if strings.ContainsAny(priv, "SIUD") {
+				p.relations[name] += priv
+			}
+		case 5, 15, 18: // procedure, function, package
+			if priv == "X" {
+				p.routines[name] = true
+			}
+		}
+	}
+	return p, rows.Err()
+}
+
+func (p *privileges) relation(rel *schema.Relation) string {
+	if p == nil {
+		return "SIUD"
+	}
+	return p.relations[rel.DBName]
+}
+
+func (p *privileges) routine(rt *schema.Routine) bool {
+	if p == nil {
+		return true
+	}
+	if rt.Package != "" {
+		return p.routines[rt.Package]
+	}
+	return p.routines[rt.DBName]
+}
+
+func (s *Server) openAPI(w http.ResponseWriter, r *http.Request, sc *schema.Schema, allow *privileges) error {
 	rc := &reqCtx{w: w, r: r}
 	if _, err := negotiate(r, mimeOpenAPI, mimeJSON); err != nil {
 		return err
@@ -123,24 +212,36 @@ func (s *Server) openAPI(w http.ResponseWriter, r *http.Request, sc *schema.Sche
 	}
 	for _, name := range sc.RelationNames() {
 		rel := sc.Relations[name]
+		privs := allow.relation(rel)
+		if privs == "" {
+			continue
+		}
 		schemas[name] = relationSchema(rel, sc)
 		filters := filterParams(rel)
-		get := m{"tags": []string{name}, "summary": "Read " + name,
-			"parameters": append(append([]any{}, filters...), ref("select"), ref("order"), ref("limit"), ref("offset"), ref("range"), ref("prefer")),
-			"responses":  m{"200": okArray(name), "206": m{"description": "Partial Content"}}}
-		item := m{"get": get}
-		if !rel.IsView || true {
+		item := m{}
+		if strings.Contains(privs, "S") {
+			item["get"] = m{"tags": []string{name}, "summary": "Read " + name,
+				"parameters": append(append([]any{}, filters...), ref("select"), ref("order"), ref("limit"), ref("offset"), ref("range"), ref("prefer")),
+				"responses":  m{"200": okArray(name), "206": m{"description": "Partial Content"}}}
+		}
+		if strings.Contains(privs, "I") {
 			item["post"] = m{"tags": []string{name}, "summary": "Insert into " + name,
 				"parameters":  []any{ref("select"), ref("columns"), ref("on_conflict"), ref("prefer")},
 				"requestBody": jsonBody(name), "responses": m{"201": m{"description": "Created"}}}
+		}
+		if strings.Contains(privs, "U") {
 			item["patch"] = m{"tags": []string{name}, "summary": "Update " + name,
 				"parameters":  append(append([]any{}, filters...), ref("select"), ref("prefer")),
 				"requestBody": m{"content": m{"application/json": m{"schema": m{"$ref": "#/components/schemas/" + name}}}},
 				"responses":   m{"200": okArray(name), "204": m{"description": "No Content"}}}
+		}
+		if strings.Contains(privs, "D") {
 			item["delete"] = m{"tags": []string{name}, "summary": "Delete from " + name,
 				"parameters": append(append([]any{}, filters...), ref("select"), ref("prefer")),
 				"responses":  m{"200": okArray(name), "204": m{"description": "No Content"}}}
-			if len(rel.PrimaryKey) > 0 {
+		}
+		{
+			if len(rel.PrimaryKey) > 0 && strings.Contains(privs, "I") && strings.Contains(privs, "U") {
 				item["put"] = m{"tags": []string{name}, "summary": "Upsert one row of " + name + " by primary key",
 					"parameters":  append(append([]any{}, filters...), ref("prefer")),
 					"requestBody": m{"content": m{"application/json": m{"schema": m{"$ref": "#/components/schemas/" + name}}}},
@@ -151,6 +252,9 @@ func (s *Server) openAPI(w http.ResponseWriter, r *http.Request, sc *schema.Sche
 	}
 	for _, name := range sc.RoutineNames() {
 		rt := sc.Routines[name]
+		if !allow.routine(rt) {
+			continue
+		}
 		props := m{}
 		var qp []any
 		for _, a := range rt.In {

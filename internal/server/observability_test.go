@@ -206,10 +206,10 @@ func TestObservability(t *testing.T) {
 	if v := sample(`firebirdrest_jwks_fetches_total`); v < 1 {
 		t.Errorf("JWKS fetches: %v", v)
 	}
-	if v := sample(`firebirdrest_db_pool_max_connections{role="web_user"}`); v != 4 {
+	if v := sample(`firebirdrest_db_pool_max_connections{role="WEB_USER"}`); v != 4 {
 		t.Errorf("web_user pool size: %v", v)
 	}
-	if v := sample(`firebirdrest_stmt_cache_misses_total{role="web_anon"}`); v < 1 {
+	if v := sample(`firebirdrest_stmt_cache_misses_total{role="WEB_ANON"}`); v < 1 {
 		t.Errorf("statement cache misses: %v", v)
 	}
 	if v := sample(`firebirdrest_schema_reloads_total`); v != 1 {

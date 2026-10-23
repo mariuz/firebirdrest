@@ -5,6 +5,36 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Security
+
+A review of the SQL generation, authentication and HTTP surface found no injection or
+authentication bypass, and these weaknesses, all fixed here:
+
+- A deeply nested `and=`/`or=` filter or a long `in.()` list could take the Firebird connection
+  down or burn CPU for tens of seconds: nesting is limited to 16 levels and `in.()` to 1000
+  values (`400` beyond).
+- A `Range` header with a huge end overflowed the limit arithmetic and removed `db-max-rows`;
+  such ranges are refused with `416`.
+- A single value requested as `text/html` (or SVG, XML, script) was served as a page of the
+  API's origin: stored script in a column could run there. Every response now carries
+  `X-Content-Type-Options: nosniff` and a sandboxing `Content-Security-Policy`, and those types
+  are sent as downloads.
+- With the default `server-cors-allowed-origins = "*"`, any origin was reflected together with
+  `Access-Control-Allow-Credentials: true`; the wildcard now answers `*` without credentials, and
+  only listed origins get credentials (with `Vary: Origin`).
+- `GET /` described every table and routine to anonymous callers. The document now follows the
+  caller's privileges (`openapi-mode`, default `follow-privileges`).
+- Permission errors named the database login ("Effective user is ..."), and unexpected errors
+  returned their internal text; both are now generic for the client and logged on the server.
+- Each case spelling of a role name (`web_user`, `WEB_USER`...) opened its own connection pool;
+  names are folded to upper case, as Firebird does.
+- The HTTP server had no request timeout and read request bodies inside the transaction:
+  `server-request-timeout` (60 s), `server-max-body-size` (16 MB) and header limits are
+  enforced, and bodies are read before the transaction starts.
+- An empty boolean in the config file (`admin-pprof =`) counted as true; it now keeps the
+  default.
+- `admin-server-host` binds the admin server to its own address, e.g. `127.0.0.1`.
+
 ### Added
 - Metrics in the Prometheus format at `GET /metrics` on the admin port: requests by method and
   status, a request duration histogram, error codes, connection pool and statement cache usage

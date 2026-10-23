@@ -417,6 +417,10 @@ Settings come from an optional config file (`firebirdrest app.conf`; see
 | `admin-pprof` | `FBREST_ADMIN_PPROF` | `false` | also serve Go profiling at `/debug/pprof/` on the admin port |
 | `server-cors-allowed-origins` | `FBREST_SERVER_CORS_ALLOWED_ORIGINS` | `*` | comma-separated list |
 | `openapi-server-proxy-uri` | `FBREST_OPENAPI_SERVER_PROXY_URI` | request host | public URL shown in the OpenAPI document |
+| `openapi-mode` | `FBREST_OPENAPI_MODE` | `follow-privileges` | `/` describes what the caller's role may use; `ignore-privileges` or `disabled` |
+| `server-request-timeout` | `FBREST_SERVER_REQUEST_TIMEOUT` | `60` | seconds a request may take (0 = no limit) |
+| `server-max-body-size` | `FBREST_SERVER_MAX_BODY_SIZE` | `16` | largest request body, in MB |
+| `admin-server-host` | `FBREST_ADMIN_SERVER_HOST` | `server-host` | listen address of the admin server |
 | `log-level` | `FBREST_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 ### Reloading the schema cache

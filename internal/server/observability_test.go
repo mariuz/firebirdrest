@@ -86,7 +86,7 @@ func metricsText(t *testing.T, s *Server) string {
 	return rec.Body.String()
 }
 
-var sampleLine = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{([a-zA-Z_][a-zA-Z0-9_]*="([^"\\]|\\.)*",?)*\})? -?[0-9.e+]+$|^[a-zA-Z_:][a-zA-Z0-9_:]*(\{.*\})? \+Inf$`)
+var sampleLine = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{([a-zA-Z_][a-zA-Z0-9_]*="([^"\\]|\\.)*",?)*\})? (-?[0-9.]+(e[+-]?[0-9]+)?|\+Inf|NaN)$`)
 
 // checkExposition checks every line against the Prometheus text format, and
 // that each sample belongs to a declared metric.

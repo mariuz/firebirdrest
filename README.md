@@ -59,7 +59,7 @@ and file downloads, and runs a compatibility suite against this repository's exa
 
 ```sh
 # example: Linux x86-64 (pick your version and platform from the releases page)
-curl -L https://github.com/mariuz/firebirdrest/releases/download/v0.3.0/firebirdrest_0.3.0_linux_amd64.tar.gz | tar xz
+curl -L https://github.com/mariuz/firebirdrest/releases/download/v0.4.0/firebirdrest_0.4.0_linux_amd64.tar.gz | tar xz
 ./firebirdrest --version
 ```
 
@@ -499,7 +499,7 @@ tag after the tests pass). The release workflow publishes binaries and checksums
 GoReleaser and pushes the Docker image to GHCR:
 
 ```sh
-git tag -a v0.3.0 -m "v0.3.0" && git push origin v0.3.0
+git tag -a v0.4.0 -m "v0.4.0" && git push origin v0.4.0
 goreleaser release --snapshot --clean      # try the release build locally
 ```
 

@@ -24,6 +24,18 @@ Client code written against the documented API keeps working. If you use
 [firebirdrest-js](https://github.com/mariuz/firebirdrest-js), its suite skips features newer
 than the server, so a newer client works with an older server.
 
+## 0.3.0 → 0.4.0
+
+Three behaviour changes, from the performance work and the schema support:
+
+| Change | Who is affected | What to do |
+|---|---|---|
+| `GET`/`HEAD` requests reuse a read-only `READ COMMITTED` transaction per connection instead of starting one each; a transaction serves up to 1000 requests or 5 minutes. Results are the same as with a fresh transaction. | Monitoring that counts transactions on the Firebird side; a `db-pre-request` procedure that relies on transaction-level state between requests. | Nothing for most deployments. `db-read-tx-reuse = false` restores one transaction per request. |
+| Multi-row inserts run as one batch (Firebird 4+, `return=minimal`) or in `EXECUTE BLOCK`s of up to 100 rows, and a transaction is bound to one pooled connection. | Triggers or procedures that observe how rows arrive, e.g. counting statements; `db-pool = 1` deployments, where a read transaction and a write now take turns on the single connection. | Nothing for most deployments. Rows of a view are still inserted one by one. |
+| On Firebird 6, a foreign key between tables of two exposed schemas is an embeddable relationship. | Clients that relied on such an embed being refused with `FBRST200`. | Nothing; expose only the schemas that may be embedded. |
+
+New: `firebirdrest -check`, the benchmarks page and the stability promise change no behaviour.
+
 ## 0.2.x → 0.3.0
 
 Six behaviour changes, all from the security review and the monitoring work:

@@ -140,8 +140,17 @@ turns a request into SQL, and from the engines:
   PostgREST) and **sorting 100,000 rows without an index** (`filter + order`, 2×). These
   requests scan the whole table on both engines; PostgreSQL scans faster. FirebirdREST's
   `count=planned`/`estimated` avoid the scan when an estimate will do.
-- **Pages of 100 rows and computed fields** (0.7–0.8×): a mix of Firebird's per-row fetch
-  cost on the wire protocol and the JSON encoding of exact numerics. Worth a look later.
+- **Pages of 100 rows and computed fields** (0.7–0.8× at the time of this table). Counting
+  the wire packets showed why: a read cost 7 round trips to Firebird, of which only two were
+  the query (transaction start, the request context block plus the row-count request the
+  driver added to it, execute, fetch, cursor close, commit). Since this measurement, reads
+  reuse a read-only transaction per connection and the context block runs without the
+  row-count request, which leaves 4 round trips. On the same machine and data, FirebirdREST
+  went from 3,900 to 5,100 req/s on a row by key, 4,200 to 6,600 on the function call, 2,340
+  to 2,900 on the computed field (parity with PostgREST), 1,800 to 2,460 on the 25-row embed
+  and 1,800 to 2,300 on the 100-row page (0.78× of PostgREST: the rest is the driver's
+  per-row decoding). The next step is in the driver: sending the cursor close together with
+  the following request, as fbclient does, would make it 3.
 
 The absolute numbers are for this machine; the ratios are what to take away. Firebird's
 engine is generally slower than PostgreSQL's at scanning and aggregating large tables, so an

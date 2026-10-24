@@ -55,8 +55,9 @@ type ReadNode struct {
 	Children []*ReadNode
 	Join     *Join
 	Inner    bool
-	Spread   bool  // merge this (to-one) child's keys into the parent object
-	Layout   []int // output order: i >= 0 is Fields[i], i < 0 is Children[-i-1]
+	Spread   bool     // merge this (to-one) child's keys into the parent object
+	Layout   []int    // output order: i >= 0 is Fields[i], i < 0 is Children[-i-1]
+	outKeys  []string // OutKeys(), computed once
 }
 
 // HasAggregates reports whether any selected field is an aggregate.
@@ -72,6 +73,15 @@ func (n *ReadNode) HasAggregates() bool {
 // OutKeys lists the JSON keys this node produces, in output order.
 // A spread child contributes its own keys.
 func (n *ReadNode) OutKeys() []string {
+	if n.outKeys == nil {
+		n.outKeys = n.computeOutKeys()
+	}
+	// full slice expression: an append by a caller copies instead of
+	// writing into the shared array
+	return n.outKeys[:len(n.outKeys):len(n.outKeys)]
+}
+
+func (n *ReadNode) computeOutKeys() []string {
 	var out []string
 	for _, i := range n.Layout {
 		if i >= 0 {

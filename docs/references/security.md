@@ -193,6 +193,19 @@ db-pre-request = "check_request"
 A banned user's requests then fail with
 `400 {"message":"This account is suspended","hint":"exception BANNED",...}`.
 
+## Transactions
+
+Every write runs in its own transaction, committed when the request succeeds and rolled back
+otherwise. Reads (`GET`, `HEAD`) run in read-only `READ COMMITTED` transactions that are
+reused: each connection of a role keeps one open and serves request after request with it.
+A statement in such a transaction sees the data committed when the statement starts, exactly
+as it would in a transaction of its own, so responses are the same; what's saved is the
+transaction start and commit round trips of every read. Firebird treats read-only
+read-committed transactions as pre-committed, so the long-lived ones don't hold back garbage
+collection. They are recycled after 1000 requests or 5 minutes, and request context variables
+set by one request are cleared by the next. `db-read-tx-reuse = false` gives every read its
+own transaction. Query plan requests always use a fresh transaction.
+
 ## Other safeguards
 
 - `PATCH` and `DELETE` without filters are refused (`db-safe-updates`).

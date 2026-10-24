@@ -372,10 +372,22 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 	for i, f := range n.Fields {
 		fieldCols[i] = FieldColumn(f)
 	}
+	// where each field goes in the output object, found once
+	outKeys := n.OutKeys()
+	keyAt := make([]int, nf)
+	for i, f := range n.Fields {
+		keyAt[i] = -1
+		for j, k := range outKeys {
+			if k == f.Key {
+				keyAt[i] = j
+				break
+			}
+		}
+	}
 	var out []*row
+	ptrs := make([]any, total)
 	for rs.Next() {
 		vals := make([]any, total)
-		ptrs := make([]any, total)
 		for i := range vals {
 			ptrs[i] = &vals[i]
 		}
@@ -384,7 +396,11 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		}
 		r := &row{obj: newObj(n)}
 		for i, f := range n.Fields {
-			r.obj.Set(f.Key, OutputCtx(ctx, vals[i], fieldCols[i]))
+			if j := keyAt[i]; j >= 0 {
+				r.obj.Vals[j] = OutputCtx(ctx, vals[i], fieldCols[i])
+			} else {
+				r.obj.Set(f.Key, OutputCtx(ctx, vals[i], fieldCols[i]))
+			}
 		}
 		r.hidden = vals[nf : nf+nHidden]
 		r.match = vals[nf+nHidden : nf+nHidden+len(matchCols)]

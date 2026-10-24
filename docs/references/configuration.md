@@ -34,6 +34,7 @@ jwt-secret = "a long random string of at least 32 characters"
 | `db-request-context` | `FBREST_DB_REQUEST_CONTEXT` | `auto` | when to set `request.*` variables: `auto`, `always`, `never` ([details](security.md#when-the-variables-are-set)) |
 | `db-prepared-statements` | `FBREST_DB_PREPARED_STATEMENTS` | `256` | prepared statements cached per role (`0` = off) |
 | `db-prepared-statements-idle` | `FBREST_DB_PREPARED_STATEMENTS_IDLE` | `30` | seconds after which an unused cached statement is closed ([why](schema-cache.md#ddl-and-cached-statements)) |
+| `db-read-tx-reuse` | `FBREST_DB_READ_TX_REUSE` | `true` | `GET`/`HEAD` requests share long-lived read-only transactions, one per connection, instead of starting and committing one each ([details](security.md#transactions)) |
 | `db-reload-event` | `FBREST_DB_RELOAD_EVENT` | `fbrest_reload` | `POST_EVENT` name that reloads the schema cache; empty disables it |
 
 ### `db-uri` options

@@ -6,6 +6,12 @@ All notable changes to FirebirdREST are listed here. The project follows
 ## [Unreleased]
 
 ### Changed
+- Reads cost 4 round trips to Firebird instead of 7: `GET`/`HEAD` requests reuse a long-lived
+  read-only `READ COMMITTED` transaction per connection (same results as a fresh one, see
+  [Transactions](https://mariuz.github.io/firebirdrest/references/security/#transactions);
+  `db-read-tx-reuse = false` restores the old behaviour), and the request context block no
+  longer triggers a row-count request. On the benchmark database: a row by key +30%, a
+  function call +60%, a computed field with order +25%, a 25-row embed +30%.
 - Multi-row inserts no longer run one statement per row. On Firebird 4+, a plain insert with
   `return=minimal` goes through the wire protocol's batch API (one batch per column set);
   everything else (Firebird 3, upserts, `return=representation`, BLOB values) runs in

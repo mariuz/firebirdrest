@@ -44,6 +44,7 @@ type Server struct {
 type rolePool struct {
 	db    *sql.DB
 	cache *stmtCache // nil when db-prepared-statements = false
+	reads readTxPool // idle read-only transactions (readtx.go)
 }
 
 func (s *Server) newRolePool(db *sql.DB) *rolePool {
@@ -111,6 +112,7 @@ func (s *Server) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range append(s.poolList(), s.basep) {
+		p.closeReads()
 		if p.cache != nil {
 			p.cache.close()
 		}
@@ -445,16 +447,29 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 		return err
 	}
 	rc.timing.txStart = time.Now()
-	// the transaction is bound to a connection of our own, so driver-level
-	// features (the batch API) can reach the connection it runs on
-	conn, err := p.db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close() // back to the pool once the transaction has ended
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: ro})
-	if err != nil {
-		return err
+	// A read reuses a long-lived read-only transaction (see readtx.go);
+	// a write gets its own, bound to a connection of our own so driver-level
+	// features (the batch API) can reach the connection it runs on.
+	// (plans read the MON$ tables, whose snapshot is taken once per
+	// transaction, so they need a fresh one)
+	reuse := ro && !s.cfg.DBReadTxFresh && rc.plan == nil
+	var rt *readTx
+	var conn *sql.Conn
+	var tx *sql.Tx
+	if reuse {
+		if rt, err = p.acquireRead(ctx); err != nil {
+			return err
+		}
+		conn, tx = rt.conn, rt.tx
+	} else {
+		p.freeForWrite()
+		if conn, err = p.db.Conn(ctx); err != nil {
+			return err
+		}
+		defer conn.Close() // back to the pool once the transaction has ended
+		if tx, err = conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: ro}); err != nil {
+			return err
+		}
 	}
 	rc.tx = &cachedTx{tx: tx, conn: conn, cache: p.cache}
 	// hold the response until COMMIT succeeds (plan mode discards it anyway)
@@ -465,7 +480,6 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 		rc.w = held
 		defer func() { rc.w = out }()
 	}
-	done := false
 	zoned := false
 	// the connection goes back to the pool: undo SET TIME ZONE first
 	resetZone := func() {
@@ -474,43 +488,56 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 			tx.ExecContext(context.Background(), "SET TIME ZONE LOCAL")
 		}
 	}
-	defer func() {
-		if !done {
-			resetZone()
-			tx.Rollback()
-		}
-	}()
-	if rc.prefer.timezone != "" {
-		if _, err := tx.ExecContext(ctx, "SET TIME ZONE '"+strings.ReplaceAll(rc.prefer.timezone, "'", "''")+"'"); err != nil {
-			if rc.prefer.handling == "strict" {
-				return &query.Error{Status: 400, Code: "FBRST130", Message: "invalid preferences given with handling=strict",
-					Details: "timezone=" + rc.prefer.timezone + ": " + firstLine(err.Error())}
+	var prevVars map[string]bool
+	if rt != nil {
+		prevVars = rt.vars
+	}
+	run := func() error {
+		if rc.prefer.timezone != "" {
+			if _, err := tx.ExecContext(ctx, "SET TIME ZONE '"+strings.ReplaceAll(rc.prefer.timezone, "'", "''")+"'"); err != nil {
+				if rc.prefer.handling == "strict" {
+					return &query.Error{Status: 400, Code: "FBRST130", Message: "invalid preferences given with handling=strict",
+						Details: "timezone=" + rc.prefer.timezone + ": " + firstLine(err.Error())}
+				}
+				// Firebird doesn't know this zone: ignore the preference
+				rc.prefer.dropApplied("timezone")
+				rc.r = rc.r.WithContext(query.WithTimeZone(rc.r.Context(), nil))
+			} else {
+				zoned = true
 			}
-			// Firebird doesn't know this zone: ignore the preference
-			rc.prefer.dropApplied("timezone")
-			rc.r = rc.r.WithContext(query.WithTimeZone(rc.r.Context(), nil))
-		} else {
-			zoned = true
 		}
-	}
-	if err := s.setContext(rc); err != nil {
-		return err
-	}
-	if rc.plan != nil {
-		rc.tx.record = &rc.plan.queries
-	}
-	if err := fn(); err != nil {
-		return err
-	}
-	if rc.plan != nil {
-		rc.tx.record = nil
-		if err := rc.plan.explain(rc); err != nil {
+		vars, err := s.setContext(rc, prevVars)
+		if err != nil {
 			return err
 		}
+		if rt != nil {
+			rt.vars = vars
+		}
+		if rc.plan != nil {
+			rc.tx.record = &rc.plan.queries
+		}
+		if err := fn(); err != nil {
+			return err
+		}
+		if rc.plan != nil {
+			rc.tx.record = nil
+			if err := rc.plan.explain(rc); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
+	err = run()
 	resetZone()
-	done = true
-	if rc.prefer.tx == "rollback" {
+	if reuse {
+		if err != nil && !connectionLost(err) && rt.vars == nil {
+			// the context block may have run before fn failed: clear next time
+			rt.vars = prevVars
+		}
+		p.releaseRead(rt, err != nil && connectionLost(err))
+	} else if err != nil {
+		tx.Rollback()
+	} else if rc.prefer.tx == "rollback" {
 		err = tx.Rollback()
 	} else {
 		err = tx.Commit()
@@ -532,16 +559,29 @@ func (s *Server) timingHeader(rc *reqCtx) func(http.Header) {
 }
 
 // setContext exposes request data to SQL via RDB$GET_CONTEXT('USER_TRANSACTION', ...).
-func (s *Server) setContext(rc *reqCtx) error {
+// setContext exposes request data to SQL via RDB$GET_CONTEXT('USER_TRANSACTION', ...),
+// and runs the pre-request procedure. prev names the variables a previous
+// request left in a reused transaction; the ones not set now are cleared.
+// It returns the names set.
+func (s *Server) setContext(rc *reqCtx, prev map[string]bool) (map[string]bool, error) {
 	withVars := s.cfg.DBRequestContext == "always" ||
 		s.cfg.DBRequestContext != "never" && rc.sc.UsesRequestContext
 	pre := s.cfg.DBPreRequest
-	if !withVars && pre == "" {
-		return nil // nothing in the database reads the variables: save a round trip
+	if !withVars && pre == "" && len(prev) == 0 {
+		return nil, nil // nothing in the database reads the variables: save a round trip
 	}
 	var vars [][2]string
 	if withVars {
 		vars = requestVars(rc)
+	}
+	set := make(map[string]bool, len(vars))
+	for _, v := range vars {
+		set[truncate(v[0], 80)] = true
+	}
+	for name := range prev {
+		if !set[name] {
+			vars = append(vars, [2]string{name, ""}) // NULL: cleared
+		}
 	}
 	// One EXECUTE BLOCK sets every variable and runs the pre-request procedure,
 	// in a single round trip and without a result set to fetch.
@@ -555,7 +595,11 @@ func (s *Server) setContext(rc *reqCtx) error {
 				sb.WriteString(", ")
 			}
 			fmt.Fprintf(&sb, "k%d VARCHAR(80) = ?, v%d VARCHAR(255) = ?", i, i)
-			args = append(args, truncate(v[0], 80), truncate(v[1], 255))
+			var val any = truncate(v[1], 255)
+			if !set[truncate(v[0], 80)] {
+				val = nil
+			}
+			args = append(args, truncate(v[0], 80), val)
 		}
 		sb.WriteString(")")
 	}
@@ -567,8 +611,17 @@ func (s *Server) setContext(rc *reqCtx) error {
 		sb.WriteString("EXECUTE PROCEDURE " + quoteDotted(pre) + "; ")
 	}
 	sb.WriteString("END")
-	_, err := rc.tx.ExecContext(rc.r.Context(), sb.String(), args...)
-	return err
+	// run as a query: the driver then uses op_execute2 alone, without the
+	// row-count request it adds after an Exec
+	rows, err := rc.tx.QueryContext(rc.r.Context(), sb.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if len(set) == 0 {
+		return nil, nil
+	}
+	return set, nil
 }
 
 // requestVars lists the context variables for a request, in a stable order.

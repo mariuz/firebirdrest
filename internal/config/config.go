@@ -32,25 +32,28 @@ type Config struct {
 	// seconds, releasing their metadata locks (0 = never).
 	DBPreparedStatementsIdle int
 	DBReloadEvent            string // POST_EVENT name that triggers a schema reload
-	JWTSecret                string // HMAC secret, PEM public key, JWK or JWKS; "@file" reads it from a file
-	JWTSecretIsBase64        bool   // the HMAC secret is base64 encoded
-	JWTJWKSURL               string // JWKS fetched over HTTP(S) and refreshed
-	JWTJWKSRefresh           int    // seconds between fetches of JWTJWKSURL
-	JWTCacheMaxEntries       int    // accepted tokens remembered (0 disables the cache)
-	JWTAudience              string
-	JWTRoleClaim             string // dotted path, e.g. "role" or "app_metadata.role"
-	ServerHost               string
-	ServerPort               int
-	ServerTimeout            int    // seconds a request may take, including reading its body (0 = no limit)
-	ServerMaxBody            int    // largest request body, in MB
-	AdminHost                string // listen address of the admin server ("" = server-host)
-	AdminPort                int    // 0 = disabled; serves /live and /ready
-	AdminPprof               bool   // also serve Go profiling endpoints at /debug/pprof/ on the admin port
-	ServerTiming             bool   // add a Server-Timing header to responses
-	CORSOrigins              string
-	OpenAPIProxyURI          string
-	OpenAPIMode              string // follow-privileges, ignore-privileges or disabled
-	LogLevel                 string
+	// DBReadTxFresh gives every read its own transaction instead of reusing
+	// a read-only one per connection (db-read-tx-reuse = false).
+	DBReadTxFresh      bool
+	JWTSecret          string // HMAC secret, PEM public key, JWK or JWKS; "@file" reads it from a file
+	JWTSecretIsBase64  bool   // the HMAC secret is base64 encoded
+	JWTJWKSURL         string // JWKS fetched over HTTP(S) and refreshed
+	JWTJWKSRefresh     int    // seconds between fetches of JWTJWKSURL
+	JWTCacheMaxEntries int    // accepted tokens remembered (0 disables the cache)
+	JWTAudience        string
+	JWTRoleClaim       string // dotted path, e.g. "role" or "app_metadata.role"
+	ServerHost         string
+	ServerPort         int
+	ServerTimeout      int    // seconds a request may take, including reading its body (0 = no limit)
+	ServerMaxBody      int    // largest request body, in MB
+	AdminHost          string // listen address of the admin server ("" = server-host)
+	AdminPort          int    // 0 = disabled; serves /live and /ready
+	AdminPprof         bool   // also serve Go profiling endpoints at /debug/pprof/ on the admin port
+	ServerTiming       bool   // add a Server-Timing header to responses
+	CORSOrigins        string
+	OpenAPIProxyURI    string
+	OpenAPIMode        string // follow-privileges, ignore-privileges or disabled
+	LogLevel           string
 	// Warnings are deprecation notices and advice found while loading; the
 	// server logs them at startup and -check prints them.
 	Warnings []string
@@ -88,6 +91,7 @@ var keys = map[string]string{
 	"db-prepared-statements":      "FBREST_DB_PREPARED_STATEMENTS",
 	"db-prepared-statements-idle": "FBREST_DB_PREPARED_STATEMENTS_IDLE",
 	"db-reload-event":             "FBREST_DB_RELOAD_EVENT",
+	"db-read-tx-reuse":            "FBREST_DB_READ_TX_REUSE",
 	"jwt-secret":                  "FBREST_JWT_SECRET",
 	"jwt-secret-is-base64":        "FBREST_JWT_SECRET_IS_BASE64",
 	"jwt-jwks-url":                "FBREST_JWT_JWKS_URL",
@@ -249,6 +253,7 @@ func Load(path string) (*Config, error) {
 	c.JWTSecretIsBase64 = getBool("FBREST_JWT_SECRET_IS_BASE64", false)
 	c.ServerTiming = getBool("FBREST_SERVER_TIMING_ENABLED", false)
 	c.AdminPprof = getBool("FBREST_ADMIN_PPROF", false)
+	c.DBReadTxFresh = !getBool("FBREST_DB_READ_TX_REUSE", true)
 	c.OpenAPIMode = strings.ToLower(get("FBREST_OPENAPI_MODE", "follow-privileges"))
 	switch c.OpenAPIMode {
 	case "follow-privileges", "ignore-privileges", "disabled":

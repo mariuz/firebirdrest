@@ -15,6 +15,11 @@ type Builder struct {
 	sb    strings.Builder
 	Args  []any
 	alias int
+	// Named makes Arg write ":pN" instead of "?", for statements inside an
+	// EXECUTE BLOCK whose parameters are declared as p0, p1...; First is the
+	// number of the first parameter.
+	Named bool
+	First int
 }
 
 func (b *Builder) W(s ...string) {
@@ -24,7 +29,12 @@ func (b *Builder) W(s ...string) {
 }
 
 func (b *Builder) Arg(v any) {
-	b.sb.WriteByte('?')
+	if b.Named {
+		b.sb.WriteString(":p")
+		b.sb.WriteString(strconv.Itoa(b.First + len(b.Args)))
+	} else {
+		b.sb.WriteByte('?')
+	}
 	b.Args = append(b.Args, v)
 }
 

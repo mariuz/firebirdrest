@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -186,5 +187,82 @@ func TestOpenAPIPrivileges(t *testing.T) {
 	noAnon := testServerWith(t, func(c *config.Config) { c.DBAnonRole = "" })
 	if r := do(t, noAnon, "GET", "/", ""); r.status != 401 {
 		t.Errorf("no anonymous role: %d %s", r.status, r.body)
+	}
+}
+
+// TestBulkInsert covers multi-row inserts, which run in EXECUTE BLOCK chunks.
+func TestBulkInsert(t *testing.T) {
+	ts := testServer(t)
+	user := "Bearer " + token(t, jwt.MapClaims{"role": "web_user"})
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i := 0; i < 250; i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		switch i % 3 { // rows with different column sets share a block
+		case 0:
+			fmt.Fprintf(&sb, `{"name":"Bulk %03d","country":"X","born":"1950-01-%02d"}`, i, 1+i%28)
+		case 1:
+			fmt.Fprintf(&sb, `{"name":"Bulk %03d","country":"X"}`, i)
+		default:
+			fmt.Fprintf(&sb, `{"country":"X","name":"Bulk %03d","born":null}`, i)
+		}
+	}
+	sb.WriteString("]")
+	r := do(t, ts, "POST", "/authors?select=id,name,born&order=name", sb.String(), "Authorization", user,
+		"Prefer", "return=representation,count=exact,tx=rollback")
+	if r.status != 201 || r.header.Get("Content-Range") != "*/250" {
+		t.Fatalf("bulk insert: %d %s %.200s", r.status, r.header.Get("Content-Range"), r.body)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(r.body), &got); err != nil || len(got) != 250 {
+		t.Fatalf("representation: %v %d", err, len(got))
+	}
+	if got[0]["name"] != "Bulk 000" || got[0]["born"] != "1950-01-01" || got[1]["born"] != nil || got[249]["name"] != "Bulk 249" {
+		t.Errorf("rows: %v %v %v", got[0], got[1], got[249])
+	}
+	if r = do(t, ts, "GET", "/authors?select=id&country=eq.X", ""); r.body != "[]" {
+		t.Errorf("rolled back rows visible: %.100s", r.body)
+	}
+
+	// a row that fails stops the whole request, nothing is kept
+	bad := `[{"name":"Ok","country":"Y"},{"name":"Ok 2","country":"Y"},{"nope":1}]`
+	if r = do(t, ts, "POST", "/authors", bad, "Authorization", user); r.status != 400 || !strings.Contains(r.body, "FBRST204") {
+		t.Errorf("bad row: %d %s", r.status, r.body)
+	}
+	bad = `[{"name":"Ok","country":"Y"},{"name":null,"country":"Y"}]` // NOT NULL violation in row 2
+	if r = do(t, ts, "POST", "/authors", bad, "Authorization", user); r.status != 400 {
+		t.Errorf("null name: %d %s", r.status, r.body)
+	}
+	if r = do(t, ts, "GET", "/authors?select=id&country=eq.Y", ""); r.body != "[]" {
+		t.Errorf("partial insert kept: %.100s", r.body)
+	}
+
+	// upserts in bulk, both resolutions, with a composite-key table
+	up := `[{"book_id":1,"tag_id":1},{"book_id":1,"tag_id":2},{"book_id":2,"tag_id":2}]`
+	r = do(t, ts, "POST", "/book_tags?select=book_id,tag_id", up, "Authorization", user, "Prefer", "resolution=ignore-duplicates,return=representation,tx=rollback")
+	if r.status != 201 || !strings.Contains(r.body, `"tag_id":2`) {
+		t.Errorf("ignore-duplicates bulk: %d %s", r.status, r.body)
+	}
+	up = `[{"id":1,"name":"fantasy"},{"id":2,"name":"science-fiction"},{"id":9001,"name":"bulk-tag"}]`
+	r = do(t, ts, "POST", "/tags?select=id,name&order=id", up, "Authorization", user, "Prefer", "resolution=merge-duplicates,return=representation,tx=rollback")
+	if r.status != 201 || !strings.Contains(r.body, `"bulk-tag"`) {
+		t.Errorf("merge-duplicates bulk: %d %s", r.status, r.body)
+	}
+
+	// binary and text BLOB values travel through the block parameters
+	png := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQAY3Y2wAAAAAElFTkSuQmCC"
+	cov := `[{"book_id":3,"image":"` + png + `"},{"book_id":4,"image":"` + png + `","mime":"image/png"}]`
+	r = do(t, ts, "POST", "/covers?select=book_id,image", cov, "Authorization", user, "Prefer", "return=representation,tx=rollback")
+	if r.status == 400 && strings.Contains(r.body, "Malformed string") && strings.Contains(do(t, ts, "GET", "/", "").body, "Firebird 6") {
+		t.Log("binary writes need the driver fix on Firebird 6 (branch fix-fb6-octets)")
+	} else if r.status != 201 || strings.Count(r.body, png) != 2 {
+		t.Errorf("blob bulk: %d %.200s", r.status, r.body)
+	}
+	bk := `[{"title":"Bulk A","author_id":1,"summary":"long text ` + strings.Repeat("x", 5000) + `"},{"title":"Bulk B","author_id":1,"summary":null}]`
+	r = do(t, ts, "POST", "/books?select=title,summary", bk, "Authorization", user, "Prefer", "return=representation,tx=rollback")
+	if r.status != 201 || !strings.Contains(r.body, strings.Repeat("x", 5000)) {
+		t.Errorf("text blob bulk: %d %.200s", r.status, r.body)
 	}
 }

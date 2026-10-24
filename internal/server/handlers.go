@@ -204,7 +204,7 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 	if err != nil {
 		return err
 	}
-	rows, isArray, err := rc.readBody()
+	rows, _, err := rc.readBody()
 	if err != nil {
 		return err
 	}
@@ -232,85 +232,18 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 		}
 	}
 
-	// rows with the same columns share one prepared statement
-	stmts := map[string]*sql.Stmt{}
-	defer func() {
-		for _, st := range stmts {
-			st.Close()
-		}
-	}()
-	for _, row := range rows {
+	// the values of every row first, so blocks can be sized
+	data := make([]rowData, len(rows))
+	for i, row := range rows {
 		cols, vals, err := rowValues(rel, row, p.Columns, p.Columns == nil || rc.prefer.missing == "default")
 		if err != nil {
 			return err
 		}
-		b := &query.Builder{}
-		switch rc.prefer.resolution {
-		case "merge-duplicates":
-			if len(cols) == 0 {
-				return &query.Error{Status: 400, Code: "FBRST102", Message: "upsert requires at least one column"}
-			}
-			b.W("UPDATE OR INSERT INTO ", rel.SQLName(), " (", quoteCols(cols), ") VALUES (")
-			for i, v := range vals {
-				if i > 0 {
-					b.W(", ")
-				}
-				b.Arg(v)
-			}
-			b.W(") MATCHING (", quoteCols(conflict), ")")
-		case "ignore-duplicates":
-			b.W("MERGE INTO ", rel.SQLName(), " t0 USING RDB$DATABASE ON ")
-			for i, c := range conflict {
-				if i > 0 {
-					b.W(" AND ")
-				}
-				idx := indexOf(cols, c)
-				if idx < 0 {
-					return &query.Error{Status: 400, Code: "FBRST102",
-						Message: fmt.Sprintf("upsert row is missing conflict column %q", c.Name)}
-				}
-				b.W("t0.", schema.Quote(c.DBName), " = ")
-				b.Arg(vals[idx])
-			}
-			b.W(" WHEN NOT MATCHED THEN INSERT (", quoteCols(cols), ") VALUES (")
-			for i, v := range vals {
-				if i > 0 {
-					b.W(", ")
-				}
-				b.Arg(v)
-			}
-			b.W(")")
-		default:
-			if len(cols) == 0 {
-				b.W("INSERT INTO ", rel.SQLName(), " DEFAULT VALUES")
-			} else {
-				b.W("INSERT INTO ", rel.SQLName(), " (", quoteCols(cols), ") VALUES (")
-				for i, v := range vals {
-					if i > 0 {
-						b.W(", ")
-					}
-					b.Arg(v)
-				}
-				b.W(")")
-			}
-		}
-		b.W(" RETURNING ", quoteCols(retCols))
-		var res *sql.Rows
-		if len(rows) == 1 {
-			res, err = rc.tx.QueryContext(ctx, b.String(), b.Args...)
-		} else {
-			st := stmts[b.String()]
-			if st == nil {
-				if st, err = rc.tx.PrepareContext(ctx, b.String()); err != nil {
-					return err
-				}
-				stmts[b.String()] = st
-			}
-			res, err = st.QueryContext(ctx, b.Args...)
-		}
-		if err != nil {
-			return err
-		}
+		data[i] = rowData{cols: cols, vals: vals}
+	}
+	// scan reads the RETURNING values of one statement or block
+	scan := func(res *sql.Rows) error {
+		defer res.Close()
 		for res.Next() {
 			v := make([]any, len(retCols))
 			ptrs := make([]any, len(retCols))
@@ -318,19 +251,58 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 				ptrs[i] = &v[i]
 			}
 			if err := res.Scan(ptrs...); err != nil {
-				res.Close()
 				return err
 			}
 			keys = append(keys, v)
 			o := &query.Obj{}
 			for i, c := range retCols {
-				o.Set(c.Name, query.OutputCtx(rc.r.Context(), v[i], c))
+				o.Set(c.Name, query.OutputCtx(ctx, v[i], c))
 			}
 			returned = append(returned, o)
 		}
-		res.Close()
-		if err := res.Err(); err != nil {
-			return err
+		return res.Err()
+	}
+
+	if len(data) == 1 || rel.IsView {
+		// one statement per row; TYPE OF COLUMN, which the blocks need, is
+		// not available for view columns
+		for _, d := range data {
+			b := &query.Builder{}
+			if _, err := writeRowStatement(b, rel, d, rc.prefer.resolution, conflict); err != nil {
+				return err
+			}
+			b.W(" RETURNING ", quoteCols(retCols))
+			res, err := rc.tx.QueryContext(ctx, b.String(), b.Args...)
+			if err != nil {
+				return err
+			}
+			if err := scan(res); err != nil {
+				return err
+			}
+		}
+	} else {
+		// chunks of rows, each one EXECUTE BLOCK
+		for _, chunk := range chunkRows(data, rc.prefer.resolution, conflict, retCols) {
+			stmts := make([]rowStmt, len(chunk))
+			first := 0
+			for i, d := range chunk {
+				b := namedBuilder(first)
+				pcols, err := writeRowStatement(b, rel, d, rc.prefer.resolution, conflict)
+				if err != nil {
+					return err
+				}
+				b.W(" RETURNING ", quoteCols(retCols))
+				stmts[i] = rowStmt{sql: b.String(), args: b.Args, cols: pcols}
+				first += len(b.Args)
+			}
+			sqlText, args := blockSQL(rel, stmts, retCols)
+			res, err := rc.tx.QueryContext(ctx, sqlText, args...)
+			if err != nil {
+				return err
+			}
+			if err := scan(res); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -353,8 +325,65 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 	if err != nil {
 		return err
 	}
-	_ = isArray
 	return writeRows(rc, http.StatusCreated, out)
+}
+
+// rowData is one row of an insert: the columns present and their values.
+type rowData struct {
+	cols []*schema.Column
+	vals []any
+}
+
+// writeRowStatement writes the INSERT, UPDATE OR INSERT or MERGE of one row
+// (without RETURNING) and returns the column of each parameter, in order.
+func writeRowStatement(b *query.Builder, rel *schema.Relation, d rowData, resolution string, conflict []*schema.Column) ([]*schema.Column, error) {
+	cols, vals := d.cols, d.vals
+	var pcols []*schema.Column
+	values := func() {
+		for i, v := range vals {
+			if i > 0 {
+				b.W(", ")
+			}
+			b.Arg(v)
+			pcols = append(pcols, cols[i])
+		}
+	}
+	switch resolution {
+	case "merge-duplicates":
+		if len(cols) == 0 {
+			return nil, &query.Error{Status: 400, Code: "FBRST102", Message: "upsert requires at least one column"}
+		}
+		b.W("UPDATE OR INSERT INTO ", rel.SQLName(), " (", quoteCols(cols), ") VALUES (")
+		values()
+		b.W(") MATCHING (", quoteCols(conflict), ")")
+	case "ignore-duplicates":
+		b.W("MERGE INTO ", rel.SQLName(), " t0 USING RDB$DATABASE ON ")
+		for i, c := range conflict {
+			if i > 0 {
+				b.W(" AND ")
+			}
+			idx := indexOf(cols, c)
+			if idx < 0 {
+				return nil, &query.Error{Status: 400, Code: "FBRST102",
+					Message: fmt.Sprintf("upsert row is missing conflict column %q", c.Name)}
+			}
+			b.W("t0.", schema.Quote(c.DBName), " = ")
+			b.Arg(vals[idx])
+			pcols = append(pcols, c)
+		}
+		b.W(" WHEN NOT MATCHED THEN INSERT (", quoteCols(cols), ") VALUES (")
+		values()
+		b.W(")")
+	default:
+		if len(cols) == 0 {
+			b.W("INSERT INTO ", rel.SQLName(), " DEFAULT VALUES")
+		} else {
+			b.W("INSERT INTO ", rel.SQLName(), " (", quoteCols(cols), ") VALUES (")
+			values()
+			b.W(")")
+		}
+	}
+	return pcols, nil
 }
 
 func indexOf(cols []*schema.Column, c *schema.Column) int {

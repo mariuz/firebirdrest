@@ -109,7 +109,7 @@ commands.
 | computed field + order | 2424 | 3174 | 0.76 | 10.94 ms | 8.95 ms |
 | rpc function | 4837 | 4523 | 1.07 | 5.65 ms | 6.11 ms |
 | insert 1 row (rollback) | 1764 | 3679 | 0.48 | 13.26 ms | 7.26 ms |
-| insert 100 rows (rollback) | 127 | 2028 | 0.06 | 168.88 ms | 14.72 ms |
+| insert 100 rows (rollback) | 127 → 191 (see below) | 2028 | 0.09 | 168.88 → 99.74 ms | 14.72 ms |
 
 ### Reading the numbers
 
@@ -126,12 +126,16 @@ turns a request into SQL, and from the engines:
   rows only, so the cost doesn't grow with the offset. Page 1 of the same request is fast on
   both; the advantage is in paging through embedded data, and in to-many embeds of parents
   with many children.
-- **Bulk inserts** (100 rows, 16× faster on PostgREST). PostgREST inserts the whole body in
-  one statement (`INSERT ... SELECT FROM json_populate_recordset`); FirebirdREST runs one
-  parameterized `INSERT` per row inside the transaction, so a 100-row body is 100 round
-  trips. Batching these (one `EXECUTE BLOCK`, or the wire protocol's batch API on Firebird 4+)
-  is the next performance item on the roadmap. Single-row inserts are 2× slower for the same
-  reason plus Firebird's commit cost.
+- **Bulk inserts** (100 rows, 11× faster on PostgREST). PostgREST inserts the whole body in
+  one statement (`INSERT ... SELECT FROM json_populate_recordset`). FirebirdREST used to run
+  one `INSERT` per row, 100 round trips; since this measurement it sends the rows in
+  `EXECUTE BLOCK`s (two for this body), which cut a single client's request from 20 ms to
+  6 ms. Under 16 concurrent clients the gain is only 127 → 191 req/s, because Firebird
+  serializes concurrent inserts into the same table: the time spent in the database grows
+  from 5 ms alone to 75 ms with 16 clients, for the old and the new code alike (a plain PSQL
+  loop inserts 200,000 rows/s on this machine when nothing else writes). That ceiling is the
+  engine's, and the benchmark, with every client inserting into one table, measures it.
+  Single-row inserts are 2× slower than PostgREST's mainly through Firebird's commit cost.
 - **Counting and aggregating 100,000 rows** (`count=exact`, `group by`, 3× faster on
   PostgREST) and **sorting 100,000 rows without an index** (`filter + order`, 2×). These
   requests scan the whole table on both engines; PostgreSQL scans faster. FirebirdREST's

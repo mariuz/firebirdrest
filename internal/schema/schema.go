@@ -44,9 +44,20 @@ type Relation struct {
 	PrimaryKey  []string // DB column names
 	Uniques     [][]string
 	cols        map[string]*Column
+	owner       *Schema // the schema the relation was loaded into (nil for routine results)
 	// Computed lists routines whose inputs are all TYPE OF COLUMN this relation:
 	// functions are computed fields, procedures are computed relationships.
 	Computed []*Routine
+}
+
+// Keys returns the foreign keys of the relation's schema: those between its
+// tables and those into or out of other exposed schemas. Nil for the result
+// set of a routine.
+func (r *Relation) Keys() []*ForeignKey {
+	if r.owner == nil {
+		return nil
+	}
+	return r.owner.ForeignKeys
 }
 
 // ComputedField finds a function usable as a computed column of r.
@@ -395,7 +406,83 @@ func LoadCatalog(ctx context.Context, db *sql.DB, names []string) (*Catalog, err
 		s.UsesRequestContext = usesCtx
 		c.Schemas = append(c.Schemas, s)
 	}
+	if err := linkCrossSchemaKeys(ctx, db, c); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// relationByDB finds a relation by its database name.
+func (s *Schema) relationByDB(dbName string) *Relation {
+	for _, r := range s.Relations {
+		if r.DBName == dbName {
+			return r
+		}
+	}
+	return nil
+}
+
+// linkCrossSchemaKeys reads the foreign keys that reference a table in
+// another exposed schema and adds each to both schemas, so a request in
+// either can embed across it (as PostgREST embeds across its exposed
+// schemas). Foreign keys into schemas that aren't exposed stay out: their
+// tables aren't part of the API. loadConstraints handles the keys within a
+// schema.
+func linkCrossSchemaKeys(ctx context.Context, db *sql.DB, c *Catalog) error {
+	if len(c.Schemas) < 2 {
+		return nil
+	}
+	in := strings.TrimSuffix(strings.Repeat("?, ", len(c.Schemas)), ", ")
+	var args []any
+	for i := 0; i < 2; i++ {
+		for _, s := range c.Schemas {
+			args = append(args, s.DBName)
+		}
+	}
+	rows, err := db.QueryContext(ctx, `
+SELECT rc.RDB$SCHEMA_NAME, rc.RDB$RELATION_NAME, rc.RDB$CONSTRAINT_NAME, seg.RDB$FIELD_NAME,
+       uq.RDB$SCHEMA_NAME, uq.RDB$RELATION_NAME, useg.RDB$FIELD_NAME
+FROM RDB$RELATION_CONSTRAINTS rc
+JOIN RDB$REF_CONSTRAINTS refc ON refc.RDB$CONSTRAINT_NAME = rc.RDB$CONSTRAINT_NAME AND refc.RDB$SCHEMA_NAME = rc.RDB$SCHEMA_NAME
+JOIN RDB$RELATION_CONSTRAINTS uq ON uq.RDB$CONSTRAINT_NAME = refc.RDB$CONST_NAME_UQ AND uq.RDB$SCHEMA_NAME = refc.RDB$CONST_SCHEMA_NAME_UQ
+JOIN RDB$INDEX_SEGMENTS seg ON seg.RDB$INDEX_NAME = rc.RDB$INDEX_NAME AND seg.RDB$SCHEMA_NAME = rc.RDB$SCHEMA_NAME
+JOIN RDB$INDEX_SEGMENTS useg ON useg.RDB$INDEX_NAME = uq.RDB$INDEX_NAME AND useg.RDB$SCHEMA_NAME = uq.RDB$SCHEMA_NAME
+ AND useg.RDB$FIELD_POSITION = seg.RDB$FIELD_POSITION
+WHERE rc.RDB$CONSTRAINT_TYPE = 'FOREIGN KEY' AND uq.RDB$SCHEMA_NAME <> rc.RDB$SCHEMA_NAME
+  AND rc.RDB$SCHEMA_NAME IN (`+in+`) AND uq.RDB$SCHEMA_NAME IN (`+in+`)
+ORDER BY rc.RDB$SCHEMA_NAME, rc.RDB$CONSTRAINT_NAME, seg.RDB$FIELD_POSITION`, args...)
+	if err != nil {
+		return fmt.Errorf("reading cross-schema foreign keys: %w", err)
+	}
+	defer rows.Close()
+	var cur *ForeignKey
+	var curSchema, curName string
+	for rows.Next() {
+		var fromSchema, fromRel, name, fromCol, toSchema, toRel, toCol sql.NullString
+		if err := rows.Scan(&fromSchema, &fromRel, &name, &fromCol, &toSchema, &toRel, &toCol); err != nil {
+			return err
+		}
+		if cur == nil || trim(fromSchema) != curSchema || trim(name) != curName {
+			curSchema, curName = trim(fromSchema), trim(name)
+			cur = nil
+			from, to := c.Lookup(curSchema), c.Lookup(trim(toSchema))
+			if from == nil || to == nil {
+				continue
+			}
+			fr, tr := from.relationByDB(trim(fromRel)), to.relationByDB(trim(toRel))
+			if fr == nil || tr == nil {
+				continue
+			}
+			cur = &ForeignKey{Name: APIName(curName), DBName: curName, From: fr, To: tr}
+			from.ForeignKeys = append(from.ForeignKeys, cur)
+			to.ForeignKeys = append(to.ForeignKeys, cur)
+		}
+		if cur != nil {
+			cur.FromCols = append(cur.FromCols, trim(fromCol))
+			cur.ToCols = append(cur.ToCols, trim(toCol))
+		}
+	}
+	return rows.Err()
 }
 
 // loadSchema reads one schema (dbSchema "" before Firebird 6: everything).
@@ -426,7 +513,7 @@ WHERE COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0
 			rows.Close()
 			return nil, err
 		}
-		rel := &Relation{DBName: trim(name), Schema: dbSchema, IsView: isView, Description: blobText(desc)}
+		rel := &Relation{DBName: trim(name), Schema: dbSchema, IsView: isView, Description: blobText(desc), owner: s}
 		rel.Name = APIName(rel.DBName)
 		byDB[rel.DBName] = rel
 		s.Relations[rel.Name] = rel
@@ -527,7 +614,7 @@ ORDER BY rc.RDB$CONSTRAINT_NAME, seg.RDB$FIELD_POSITION`, args...)
 		if c == nil {
 			c = &cons{rel: trim(rel), name: n, typ: trim(typ), refName: trim(ref)}
 			if refSchema.Valid && trim(refSchema) != sc.dbSchema {
-				c.refName = "" // references another schema: not embeddable from this one
+				c.refName = "" // references another schema: linked by linkCrossSchemaKeys when that schema is exposed
 			}
 			all[n] = c
 			order = append(order, n)

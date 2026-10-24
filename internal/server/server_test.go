@@ -760,9 +760,29 @@ func TestSchemas(t *testing.T) {
 	}
 	jsonEq(t, do(t, ts, "GET", "/warehouses?select=name,stock(book_id,qty)&stock.order=book_id&order=id", "", "Accept-Profile", "INVENTORY").body,
 		`[{"name":"Bucharest","stock":[{"book_id":1,"qty":12},{"book_id":2,"qty":3}]},{"name":"Cluj","stock":[{"book_id":1,"qty":0}]}]`)
-	// a foreign key into another schema is not an embeddable relationship
-	if r = do(t, ts, "GET", "/stock?select=qty,books(title)", "", "Accept-Profile", inv); r.status != 400 || !strings.Contains(r.body, "FBRST200") {
-		t.Errorf("cross-schema embed: %d %s", r.status, r.body)
+	// a foreign key into another exposed schema is an embeddable relationship, both ways:
+	// inventory.stock.book_id references public.books, while inventory has a books table of its own
+	jsonEq(t, do(t, ts, "GET", "/stock?select=qty,books(title)&order=id", "", "Accept-Profile", inv).body,
+		`[{"qty":12,"books":{"title":"Guards! Guards!"}},{"qty":3,"books":{"title":"Small Gods"}},{"qty":0,"books":{"title":"Guards! Guards!"}}]`)
+	jsonEq(t, do(t, ts, "GET", "/books?select=title,stock(qty,warehouses(name))&id=eq.1&stock.order=id", "").body,
+		`[{"title":"Guards! Guards!","stock":[{"qty":12,"warehouses":{"name":"Bucharest"}},{"qty":0,"warehouses":{"name":"Cluj"}}]}]`)
+	// by the FK column name, with a hint, and filtered through the embed
+	jsonEq(t, do(t, ts, "GET", "/stock?select=qty,book_id(title)&id=eq.1", "", "Accept-Profile", inv).body,
+		`[{"qty":12,"book_id":{"title":"Guards! Guards!"}}]`)
+	jsonEq(t, do(t, ts, "GET", "/books?select=title,stock!inner(qty)&stock.qty=gt.5", "").body,
+		`[{"title":"Guards! Guards!","stock":[{"qty":12}]}]`)
+	// the other schema's table is still not a resource of this one
+	if r = do(t, ts, "GET", "/stock", ""); r.status != 404 {
+		t.Errorf("inventory.stock as a public resource: %d", r.status)
+	}
+	// the referenced schema must be exposed
+	only, err := startServer(t, &config.Config{DBURI: uri, DBAnonRole: "web_anon", DBPool: 2, DBPreparedStatements: 64,
+		DBRequestContext: "auto", JWTSecret: testSecret, JWTRoleClaim: "role", DBSchemas: []string{"inventory"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r = do(t, only, "GET", "/stock?select=qty,books(title)", ""); r.status != 400 || !strings.Contains(r.body, "FBRST200") {
+		t.Errorf("embed into a schema that isn't exposed: %d %s", r.status, r.body)
 	}
 	// counts and estimates use the schema's own table
 	r = do(t, ts, "GET", "/stock?select=id&limit=1", "", "Accept-Profile", inv, "Prefer", "count=exact")

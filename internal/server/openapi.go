@@ -45,7 +45,11 @@ func relationSchema(r *schema.Relation, sc *schema.Schema) m {
 		}
 		for _, fk := range sc.ForeignKeys {
 			if fk.From == r && len(fk.FromCols) == 1 && fk.FromCols[0] == c.DBName {
-				cs["description"] = cs["description"].(string) + " (references " + fk.To.Name + "." + schema.APIName(fk.ToCols[0]) + ")"
+				ref := fk.To.Name
+				if fk.To.Schema != r.Schema {
+					ref = schema.APIName(fk.To.Schema) + "." + ref
+				}
+				cs["description"] = cs["description"].(string) + " (references " + ref + "." + schema.APIName(fk.ToCols[0]) + ")"
 			}
 		}
 		props[c.Name] = cs

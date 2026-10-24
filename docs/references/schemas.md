@@ -49,10 +49,32 @@ Everything in a request happens in its schema:
 
 - tables, views and routines are looked up there, so two schemas can each have a `books` table;
 - every statement uses schema-qualified names (`"INVENTORY"."STOCK"`), not the search path;
-- embedding follows foreign keys within the schema. A foreign key that references a table in
-  another schema is not an embeddable relationship; computed fields and relationships likewise
-  only use routines and `TYPE OF COLUMN` parameters of the same schema;
+- embedding follows foreign keys within the schema and into the other exposed schemas (see
+  below); computed fields and relationships only use routines and `TYPE OF COLUMN` parameters
+  of the same schema;
 - packaged routines are `/rpc/package.name` of the schema's packages.
+
+## Relationships across schemas
+
+A foreign key whose table and referenced table are in two exposed schemas is a relationship
+like any other, in both directions, as in PostgREST. In the example, `inventory.stock.book_id`
+references `public.books`:
+
+```sh
+# from inventory into public ...
+curl 'localhost:3000/stock?select=qty,books(title)' -H 'Accept-Profile: inventory'
+# ... and from public into inventory, nesting on within inventory
+curl 'localhost:3000/books?select=title,stock(qty,warehouses(name))&id=eq.1'
+```
+
+The embedded table is named as in its own schema; it does not become a resource of the
+request's schema (`GET /stock` without `Accept-Profile: inventory` is still `404`). When the
+request's schema has a table of the same name, as `inventory` has its own `books`, the foreign
+key decides which one is meant; with several candidate keys, disambiguate with
+`books!<constraint or column>(...)` as usual. A foreign key into a schema that is not in
+`db-schemas` is not a relationship: that table is not part of the API.
+
+The role needs `USAGE` on both schemas and the usual `SELECT` on the embedded table.
 
 ## Permissions
 

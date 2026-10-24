@@ -32,7 +32,7 @@ list below.
 | Topic | PostgREST | FirebirdREST |
 |---|---|---|
 | Namespaces | exposed schemas, `Accept-Profile` | the same on Firebird 6 (`db-schemas`, `Accept-Profile`, `Content-Profile`); Firebird 3–5 have no schemas: one namespace. Packaged routines are `/rpc/package.name` |
-| Relationships across schemas | foreign keys into other exposed schemas | only within the request's schema |
+| Relationships across schemas | foreign keys into other exposed schemas | the same on Firebird 6: foreign keys between exposed schemas embed both ways |
 | Identifier case | as stored | unquoted (upper case) names shown in lower case |
 | Claims in SQL | `current_setting('request.jwt.claims')::json` | `RDB$GET_CONTEXT('USER_TRANSACTION', 'request.jwt.claim.<name>')`, one variable per claim (Firebird has no JSON functions) |
 | Computed fields / relationships | functions taking a table row | routines whose parameters are `TYPE OF COLUMN <table>.<col>` |

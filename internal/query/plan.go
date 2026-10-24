@@ -372,12 +372,25 @@ type candidate struct {
 func resolveEmbed(s *schema.Schema, parent *ReadNode, item *SelectItem) (*ReadNode, error) {
 	pr := parent.Rel
 	var cands []candidate
-	target := s.Relation(item.Name)
+	// A relationship's other side is matched by name, not looked up in the
+	// request's schema: a foreign key may lead into another exposed schema
+	// (Firebird 6), whose table is then embeddable although it isn't a
+	// resource of this schema.
+	named := func(r *schema.Relation) bool {
+		return r.Name == item.Name || r.DBName == item.Name
+	}
+	var target *schema.Relation
+	// the keys of the parent's own schema: a nested embed may already be in
+	// another schema than the request's
+	keys := pr.Keys()
+	if keys == nil {
+		keys = s.ForeignKeys
+	}
 
-	for _, fk := range s.ForeignKeys {
+	for _, fk := range keys {
 		// many-to-one: parent holds the FK. Embed by table name or by FK column name.
 		if fk.From == pr {
-			byTable := target != nil && fk.To == target
+			byTable := named(fk.To)
 			byCol := len(fk.FromCols) == 1 && schema.APIName(fk.FromCols[0]) == item.Name
 			if (byTable && fkMatchesHint(fk, item.Hint)) || (byCol && item.Hint == "") {
 				cands = append(cands, candidate{fk.To, &Join{Kind: ManyToOne, FK: fk,
@@ -385,23 +398,26 @@ func resolveEmbed(s *schema.Schema, parent *ReadNode, item *SelectItem) (*ReadNo
 			}
 		}
 		// one-to-many: child holds an FK to the parent.
-		if target != nil && fk.From == target && fk.To == pr && fkMatchesHint(fk, item.Hint) {
+		if fk.To == pr && named(fk.From) && fkMatchesHint(fk, item.Hint) {
+			target = fk.From
 			single := len(target.PrimaryKey) > 0 && sameCols(fk.FromCols, target.PrimaryKey)
 			cands = append(cands, candidate{target, &Join{Kind: OneToMany, FK: fk,
 				ParentCols: fk.ToCols, ChildCols: fk.FromCols, Single: single}, "one-to-many via " + fk.Name})
 		}
 	}
 	// many-to-many through a junction table whose FKs are part of its primary key.
-	if target != nil && len(cands) == 0 {
-		for _, toParent := range s.ForeignKeys {
+	if len(cands) == 0 {
+		for _, toParent := range keys {
 			if toParent.To != pr {
 				continue
 			}
 			j := toParent.From
-			for _, toChild := range s.ForeignKeys {
-				if toChild.From != j || toChild.To != target || toChild == toParent {
+			// the junction's keys are in its own schema's list
+			for _, toChild := range j.Keys() {
+				if toChild.From != j || !named(toChild.To) || toChild == toParent {
 					continue
 				}
+				target = toChild.To
 				if !inPK(j, toParent.FromCols) || !inPK(j, toChild.FromCols) {
 					continue
 				}

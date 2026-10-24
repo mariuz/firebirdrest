@@ -20,6 +20,10 @@ All notable changes to FirebirdREST are listed here. The project follows
   one. Transactions are now bound to one pooled connection each, which the batch API needs.
 
 ### Added
+- Relationships across SQL schemas on Firebird 6: a foreign key between tables of two exposed
+  schemas (`db-schemas`) is an embeddable relationship in both directions, as in PostgREST,
+  also when the request's schema has a table of the same name. Foreign keys into schemas that
+  aren't exposed stay out ([schemas](https://mariuz.github.io/firebirdrest/references/schemas/#relationships-across-schemas)).
 - Benchmarks against PostgREST on identical data, with the PostgreSQL schema and seed in
   `bench/postgrest/` and the results and their interpretation on the Benchmarks page.
 - A [stability promise](https://mariuz.github.io/firebirdrest/references/stability/) saying

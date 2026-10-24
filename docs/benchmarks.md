@@ -83,6 +83,67 @@ unindexed column (`filter + order`), grouping the whole table (`aggregate`) and 
 (`count=exact`). An index on `books(price)` or on the filtered columns helps them far more than
 anything in the API layer.
 
+## Compared with PostgREST
+
+The same 14 scenarios against PostgREST 16.5 on PostgreSQL 17.11, with identical data
+(`bench/postgrest/schema.sql` and `seed.sql` create the same rows as `bench seed`), the same
+load tool, the same settings on both sides (pool of 32, anonymous role, aggregates enabled,
+`Prefer: tx=rollback` honoured) and 16 concurrent clients. FirebirdREST 0.3.0 with Firebird
+5.0.4; everything in Docker on the 4-vCPU Xeon VM above, PostgreSQL and Firebird each with
+default memory settings except `shared_buffers=512MB`. Each side ran twice, alternating, 4
+seconds per scenario; the table shows the median run. `bench/postgrest/README.md` has the
+commands.
+
+| Scenario | FirebirdREST req/s | PostgREST req/s | FirebirdREST / PostgREST | FirebirdREST p95 | PostgREST p95 |
+|---|---:|---:|---:|---:|---:|
+| row by primary key | 4458 | 4310 | 1.03 | 5.99 ms | 6.92 ms |
+| page of 100 rows | 1980 | 2948 | 0.67 | 13.20 ms | 10.29 ms |
+| filter + order + limit 25 | 82 | 180 | 0.45 | 280.04 ms | 150.48 ms |
+| ilike search, limit 25 | 1436 | 1722 | 0.83 | 21.26 ms | 20.03 ms |
+| embed many-to-one (25) | 2068 | 1300 | 1.59 | 12.92 ms | 27.42 ms |
+| embed one-to-many (10) | 582 | 46 | 12.66 | 42.91 ms | 655.88 ms |
+| embed many-to-many (25) | 826 | 706 | 1.17 | 32.25 ms | 47.57 ms |
+| nested 3 levels (5) | 678 | 32 | 20.88 | 40.53 ms | 855.70 ms |
+| aggregate group by | 96 | 302 | 0.32 | 236.88 ms | 82.17 ms |
+| count=exact, 25 rows | 139 | 485 | 0.29 | 165.38 ms | 53.21 ms |
+| computed field + order | 2424 | 3174 | 0.76 | 10.94 ms | 8.95 ms |
+| rpc function | 4837 | 4523 | 1.07 | 5.65 ms | 6.11 ms |
+| insert 1 row (rollback) | 1764 | 3679 | 0.48 | 13.26 ms | 7.26 ms |
+| insert 100 rows (rollback) | 127 | 2028 | 0.06 | 168.88 ms | 14.72 ms |
+
+### Reading the numbers
+
+Requests that cost about the same in both engines (a row by key, a function call, a 25-row
+embed) land within 10% of each other: the HTTP and SQL-building layers of the two servers
+cost about the same, and the rest is the database. The differences come from how each server
+turns a request into SQL, and from the engines:
+
+- **Embedding with paging** (one-to-many, nested, 12–21× faster on FirebirdREST). PostgREST
+  embeds in one statement with a lateral join per level, and PostgreSQL evaluates that join
+  for every parent row the `OFFSET` skips: at `offset=1900` the per-author aggregation runs
+  1,910 times for 10 result rows (178 ms in `EXPLAIN ANALYZE`; 560 ms for the three-level
+  nest). FirebirdREST pages the parent rows first and fetches each level's children for those
+  rows only, so the cost doesn't grow with the offset. Page 1 of the same request is fast on
+  both; the advantage is in paging through embedded data, and in to-many embeds of parents
+  with many children.
+- **Bulk inserts** (100 rows, 16× faster on PostgREST). PostgREST inserts the whole body in
+  one statement (`INSERT ... SELECT FROM json_populate_recordset`); FirebirdREST runs one
+  parameterized `INSERT` per row inside the transaction, so a 100-row body is 100 round
+  trips. Batching these (one `EXECUTE BLOCK`, or the wire protocol's batch API on Firebird 4+)
+  is the next performance item on the roadmap. Single-row inserts are 2× slower for the same
+  reason plus Firebird's commit cost.
+- **Counting and aggregating 100,000 rows** (`count=exact`, `group by`, 3× faster on
+  PostgREST) and **sorting 100,000 rows without an index** (`filter + order`, 2×). These
+  requests scan the whole table on both engines; PostgreSQL scans faster. FirebirdREST's
+  `count=planned`/`estimated` avoid the scan when an estimate will do.
+- **Pages of 100 rows and computed fields** (0.7–0.8×): a mix of Firebird's per-row fetch
+  cost on the wire protocol and the JSON encoding of exact numerics. Worth a look later.
+
+The absolute numbers are for this machine; the ratios are what to take away. Firebird's
+engine is generally slower than PostgreSQL's at scanning and aggregating large tables, so an
+API that does mostly keyed reads, embeds and small writes compares well, and one that counts or
+groups large tables on every request does not, whichever REST layer is in front.
+
 ## What was optimized
 
 Profiling (`admin-pprof = true`) showed that time went into database round trips and Firebird

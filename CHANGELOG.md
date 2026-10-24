@@ -6,6 +6,8 @@ All notable changes to FirebirdREST are listed here. The project follows
 ## [Unreleased]
 
 ### Added
+- Benchmarks against PostgREST on identical data, with the PostgreSQL schema and seed in
+  `bench/postgrest/` and the results and their interpretation on the Benchmarks page.
 - A [stability promise](https://mariuz.github.io/firebirdrest/references/stability/) saying
   which interfaces are stable, which are experimental, and how deprecations and behaviour
   changes are announced, and an [upgrade guide](https://mariuz.github.io/firebirdrest/upgrading/)

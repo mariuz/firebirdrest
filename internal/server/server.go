@@ -445,11 +445,18 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 		return err
 	}
 	rc.timing.txStart = time.Now()
-	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: ro})
+	// the transaction is bound to a connection of our own, so driver-level
+	// features (the batch API) can reach the connection it runs on
+	conn, err := p.db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	rc.tx = &cachedTx{tx: tx, cache: p.cache}
+	defer conn.Close() // back to the pool once the transaction has ended
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: ro})
+	if err != nil {
+		return err
+	}
+	rc.tx = &cachedTx{tx: tx, conn: conn, cache: p.cache}
 	// hold the response until COMMIT succeeds (plan mode discards it anyway)
 	out := rc.w
 	var held *txWriter

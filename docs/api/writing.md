@@ -16,10 +16,13 @@ The response is `201 Created`. For a single row with a primary key, a `Location`
 to it (`/tags?id=eq.7`). Columns missing from an object get their default (or the identity
 value), and unknown keys are rejected with `400`.
 
-An array is inserted in blocks: the rows' statements go to Firebird in `EXECUTE BLOCK`s of up
-to 100 rows (fewer for wide rows), each returning the keys of its rows, so a 100-row body costs
-a couple of round trips instead of 100. Objects in one array may have different columns. Rows
-of a view are inserted one by one. If any row fails, the whole request fails and nothing is
+An array is sent to Firebird in bulk, not row by row. On Firebird 4 and later, a plain insert
+without `Prefer: return=representation` uses the wire protocol's batch API: one batch per set
+of columns, all rows in one message stream. Otherwise (Firebird 3, upserts, a representation
+wanted, BLOB values, or values the batch can't carry exactly) the rows' statements go in
+`EXECUTE BLOCK`s of up to 100 rows, each returning the keys of its rows. Either way a 100-row
+body costs a few round trips instead of 100. Objects in one array may have different columns.
+Rows of a view are inserted one by one. If any row fails, the whole request fails and nothing is
 kept.
 
 ### Getting the rows back

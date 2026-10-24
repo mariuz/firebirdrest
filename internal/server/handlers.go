@@ -263,6 +263,18 @@ func (s *Server) insert(rc *reqCtx, rel *schema.Relation) error {
 		return res.Err()
 	}
 
+	if batchable(rc, rel, rc.prefer.resolution, data) {
+		// Firebird 4+: the batch API sends every row in one message stream
+		n, err := insertBatch(ctx, rc, rel, data)
+		if err != nil {
+			return err
+		}
+		if rc.prefer.count != "" {
+			rc.w.Header().Set("Content-Range", "*/"+strconv.FormatInt(n, 10))
+		}
+		writeBody(rc, http.StatusCreated, "", nil)
+		return nil
+	}
 	if len(data) == 1 || rel.IsView {
 		// one statement per row; TYPE OF COLUMN, which the blocks need, is
 		// not available for view columns

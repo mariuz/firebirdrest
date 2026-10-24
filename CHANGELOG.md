@@ -6,10 +6,12 @@ All notable changes to FirebirdREST are listed here. The project follows
 ## [Unreleased]
 
 ### Changed
-- Multi-row inserts run in `EXECUTE BLOCK`s of up to 100 rows (fewer for wide rows), one
-  round trip per block instead of one per row, with the keys of every row returned by the
-  block. A 100-row insert takes a third of the time it took. Upserts in bulk take the same
-  path; rows of a view are still inserted one by one.
+- Multi-row inserts no longer run one statement per row. On Firebird 4+, a plain insert with
+  `return=minimal` goes through the wire protocol's batch API (one batch per column set);
+  everything else (Firebird 3, upserts, `return=representation`, BLOB values) runs in
+  `EXECUTE BLOCK`s of up to 100 rows that return every row's keys. A 100-row insert takes a
+  third of the time it took, a 1000-row one less. Rows of a view are still inserted one by
+  one. Transactions are now bound to one pooled connection each, which the batch API needs.
 
 ### Added
 - Benchmarks against PostgREST on identical data, with the PostgreSQL schema and seed in

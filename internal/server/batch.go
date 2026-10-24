@@ -1,8 +1,15 @@
 package server
 
 import (
+	"context"
+	"database/sql/driver"
+	"errors"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/nakagami/firebirdsql"
 
 	"github.com/mariuz/firebirdrest/internal/query"
 	"github.com/mariuz/firebirdrest/internal/schema"
@@ -128,3 +135,186 @@ func blockSQL(rel *schema.Relation, chunk []rowStmt, retCols []*schema.Column) (
 func namedBuilder(first int) *query.Builder {
 	return &query.Builder{Named: true, First: first}
 }
+
+// batchPreparer is what the driver's connection offers on Firebird 4+ (wire
+// protocol 16): the server-side batch API.
+type batchPreparer interface {
+	PrepareBatch(ctx context.Context, sql string, opts firebirdsql.BatchOptions) (*firebirdsql.PreparedBatch, error)
+}
+
+// batchable reports whether rows can go through the batch API: Firebird 4+,
+// a plain INSERT, no RETURNING values wanted, and every value encodable by
+// the batch exactly (see batchValue). Anything else takes the EXECUTE BLOCK
+// path, which also reports the proper error for a value that doesn't fit.
+func batchable(rc *reqCtx, rel *schema.Relation, resolution string, rows []rowData) bool {
+	if resolution != "" || rel.IsView || len(rows) < 2 || rc.prefer.ret == "representation" ||
+		schema.MajorVersion(rc.sc.Version) < 4 || rc.tx.conn == nil {
+		return false
+	}
+	for _, d := range rows {
+		if len(d.cols) == 0 {
+			return false // INSERT ... DEFAULT VALUES has no parameters
+		}
+		for i, c := range d.cols {
+			if _, ok := batchValue(c, d.vals[i]); !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// batchValue converts a coerced value into what the driver's batch encoder
+// writes correctly for column c, or reports that the batch can't carry it:
+// BLOBs, time zone types, INT128 and DECFLOAT, text longer than the column
+// (the encoder would truncate it), and numerics with more decimals than the
+// column's scale.
+func batchValue(c *schema.Column, v any) (driver.Value, bool) {
+	if v == nil {
+		return nil, true
+	}
+	switch c.FieldType {
+	case schema.TVarchar, schema.TChar:
+		s, ok := v.(string)
+		if !ok || c.IsBinary() {
+			return nil, false
+		}
+		if c.CharLength > 0 && utf8.RuneCountInString(s) > c.CharLength {
+			return nil, false
+		}
+		return s, true
+	case schema.TBoolean:
+		b, ok := v.(bool)
+		return b, ok
+	case schema.TDouble, schema.TFloat:
+		switch x := v.(type) {
+		case float64:
+			return x, true
+		case int64:
+			return float64(x), true
+		case string:
+			f, err := strconv.ParseFloat(x, 64)
+			return f, err == nil
+		}
+		return nil, false
+	case schema.TSmallint, schema.TInteger, schema.TBigint:
+		return scaledInt(v, c.Scale)
+	case schema.TDate, schema.TTime, schema.TTimestamp:
+		s, ok := v.(string)
+		if !ok {
+			return nil, false
+		}
+		for _, layout := range []string{"2006-01-02", "15:04:05.0000", "15:04:05", "2006-01-02 15:04:05.0000", "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
+			if t, err := time.Parse(layout, s); err == nil {
+				return t, true
+			}
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+// scaledInt returns the integer the engine stores for a NUMERIC/DECIMAL
+// value with the column's scale: 9.99 with scale -2 is 999. A value with
+// more decimals than the scale is refused rather than rounded.
+func scaledInt(v any, scale int) (driver.Value, bool) {
+	var s string
+	switch x := v.(type) {
+	case int64:
+		if scale == 0 {
+			return x, true
+		}
+		s = strconv.FormatInt(x, 10)
+	case float64:
+		if scale == 0 && x == float64(int64(x)) {
+			return int64(x), true
+		}
+		s = strconv.FormatFloat(x, 'f', -1, 64)
+	case string:
+		s = strings.TrimSpace(x)
+	default:
+		return nil, false
+	}
+	neg := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "-"), "+")
+	whole, frac, _ := strings.Cut(s, ".")
+	if whole == "" {
+		whole = "0"
+	}
+	decimals := -scale
+	if len(frac) > decimals || strings.ContainsAny(s, "eE") {
+		return nil, false
+	}
+	digits := whole + frac + strings.Repeat("0", decimals-len(frac))
+	n, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil {
+		return nil, false
+	}
+	if neg {
+		n = -n
+	}
+	return n, true
+}
+
+// shapeKey groups rows that share a statement: the same columns in order.
+func shapeKey(d rowData) string {
+	names := make([]string, len(d.cols))
+	for i, c := range d.cols {
+		names[i] = c.DBName
+	}
+	return strings.Join(names, "\x00")
+}
+
+// insertBatch inserts rows with the batch API, one batch per column shape,
+// and returns how many rows were inserted.
+func insertBatch(ctx context.Context, rc *reqCtx, rel *schema.Relation, rows []rowData) (int64, error) {
+	// keep the body's order within a shape; shapes in order of first appearance
+	var order []string
+	groups := map[string][]rowData{}
+	for _, d := range rows {
+		k := shapeKey(d)
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], d)
+	}
+	var total int64
+	for _, k := range order {
+		group := groups[k]
+		b := &query.Builder{}
+		b.W("INSERT INTO ", rel.SQLName(), " (", quoteCols(group[0].cols), ") VALUES (", placeholders(len(group[0].cols)), ")")
+		rc.tx.note(b.String())
+		err := rc.tx.conn.Raw(func(dc any) error {
+			bp, ok := dc.(batchPreparer)
+			if !ok {
+				return errNoBatch
+			}
+			batch, err := bp.PrepareBatch(ctx, b.String(), firebirdsql.BatchOptions{})
+			if err != nil {
+				return err
+			}
+			defer batch.Close()
+			for _, d := range group {
+				args := make([]driver.Value, len(d.vals))
+				for i, v := range d.vals {
+					args[i], _ = batchValue(d.cols[i], v) // checked by batchable
+				}
+				if err := batch.Add(args...); err != nil {
+					return err
+				}
+			}
+			res, err := batch.Exec(ctx)
+			if err != nil {
+				return err
+			}
+			total += res.Affected
+			return nil
+		})
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+var errNoBatch = errors.New("the driver connection has no batch API")

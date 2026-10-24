@@ -266,3 +266,73 @@ func TestBulkInsert(t *testing.T) {
 		t.Errorf("text blob bulk: %d %.200s", r.status, r.body)
 	}
 }
+
+// TestBulkInsertMinimal covers return=minimal bulk inserts, which use the
+// batch API on Firebird 4+ and EXECUTE BLOCKs before.
+func TestBulkInsertMinimal(t *testing.T) {
+	ts := testServer(t)
+	user := "Bearer " + token(t, jwt.MapClaims{"role": "web_user"})
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i := 0; i < 300; i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		if i%2 == 0 { // two column shapes: two batches
+			fmt.Fprintf(&sb, `{"name":"Min %03d","country":"M","born":"1960-02-%02d"}`, i, 1+i%28)
+		} else {
+			fmt.Fprintf(&sb, `{"name":"Min %03d","country":"M"}`, i)
+		}
+	}
+	sb.WriteString("]")
+	r := do(t, ts, "POST", "/authors", sb.String(), "Authorization", user, "Prefer", "count=exact")
+	if r.status != 201 || r.header.Get("Content-Range") != "*/300" || r.body != "" {
+		t.Fatalf("minimal bulk insert: %d %s %.200s", r.status, r.header.Get("Content-Range"), r.body)
+	}
+	r = do(t, ts, "GET", "/authors?select=name,born&country=eq.M&order=name&limit=2", "")
+	jsonEq(t, r.body, `[{"name":"Min 000","born":"1960-02-01"},{"name":"Min 001","born":null}]`)
+	r = do(t, ts, "GET", "/authors?select=count()&country=eq.M", "")
+	jsonEq(t, r.body, `[{"count":300}]`)
+	// a failing row fails the request and keeps nothing
+	bad := `[{"name":"Min X","country":"N"},{"name":null,"country":"N"}]`
+	if r = do(t, ts, "POST", "/authors", bad, "Authorization", user); r.status != 400 {
+		t.Errorf("null in batch: %d %s", r.status, r.body)
+	}
+	if r = do(t, ts, "GET", "/authors?select=id&country=eq.N", ""); r.body != "[]" {
+		t.Errorf("partial batch kept: %.100s", r.body)
+	}
+	// rollback applies to batches too
+	if r = do(t, ts, "POST", "/authors", `[{"name":"Min R","country":"R"},{"name":"Min S","country":"R"}]`, "Authorization", user, "Prefer", "tx=rollback"); r.status != 201 {
+		t.Errorf("rollback batch: %d %s", r.status, r.body)
+	}
+	if r = do(t, ts, "GET", "/authors?select=id&country=eq.R", ""); r.body != "[]" {
+		t.Errorf("rolled-back batch visible: %.100s", r.body)
+	}
+	if r = do(t, ts, "DELETE", "/authors?country=eq.M", "", "Authorization", user); r.status != 204 {
+		t.Errorf("cleanup: %d %s", r.status, r.body)
+	}
+
+	// scaled numerics, integers, booleans and nulls through the batch encoder
+	books := `[{"title":"Batch 1","author_id":1,"price":9.99,"published":2001,"in_stock":false},
+		{"title":"Batch 2","author_id":1,"price":"12","published":null,"in_stock":true},
+		{"title":"Batch 3","author_id":1,"price":7.5,"published":1999,"in_stock":true}]`
+	if r = do(t, ts, "POST", "/books", books, "Authorization", user); r.status != 201 {
+		t.Fatalf("books batch: %d %s", r.status, r.body)
+	}
+	r = do(t, ts, "GET", "/books?select=title,price,published,in_stock&title=like.Batch*&order=title", "")
+	jsonEq(t, r.body, `[{"title":"Batch 1","price":9.99,"published":2001,"in_stock":false},
+		{"title":"Batch 2","price":12,"published":null,"in_stock":true},
+		{"title":"Batch 3","price":7.5,"published":1999,"in_stock":true}]`)
+	// a price with too many decimals or a title too long is handled by the
+	// block path, which reports the error
+	tooLong := `[{"title":"` + strings.Repeat("t", 201) + `","author_id":1},{"title":"Batch 4","author_id":1}]`
+	if r = do(t, ts, "POST", "/books", tooLong, "Authorization", user); r.status != 400 {
+		t.Errorf("too long title: %d %s", r.status, r.body)
+	}
+	if r = do(t, ts, "GET", "/books?select=title&title=eq.Batch%204", ""); r.body != "[]" {
+		t.Errorf("row kept after the failed request: %s", r.body)
+	}
+	if r = do(t, ts, "DELETE", "/books?title=like.Batch*", "", "Authorization", user); r.status != 204 {
+		t.Errorf("cleanup: %d %s", r.status, r.body)
+	}
+}

@@ -157,6 +157,7 @@ func (c *stmtCache) clear() {
 // It satisfies query.Querier.
 type cachedTx struct {
 	tx    *sql.Tx
+	conn  *sql.Conn  // the connection tx runs on
 	cache *stmtCache // nil disables caching
 	// record, when set, collects the SQL of every statement (for query plans)
 	record *[]string

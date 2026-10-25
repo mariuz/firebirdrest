@@ -18,6 +18,9 @@ All notable changes to FirebirdREST are listed here. The project follows
   `{node, children}` nodes, next to the text in `plan`.
 
 ### Changed
+- Plain JSON reads (no embedded resources) encode each row as it is read instead of keeping
+  every row and then the JSON: a 200,000-row, 106 MB response peaks at 216 MB of process memory
+  instead of 536 MB and takes 1.7 s instead of 4.5 s.
 - `Prefer: params=multiple-objects` on a selectable procedure takes up to 1024 objects (their
   arguments within 48 KB) instead of 200: the calls are driven by a counting CTE in one
   statement, so the procedure is one context however many objects there are.

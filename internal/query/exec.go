@@ -271,6 +271,20 @@ func Keys(ctx context.Context, q Querier, n *ReadNode, cols []string) ([][]any, 
 // queryNode runs one SELECT for node n. matchCols/keys restrict the rows
 // (for embedded children, or for re-reading written rows).
 func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchCols []string, keys [][]any, paging bool) ([]*row, error) {
+	var out []*row
+	err := queryNodeKeys(ctx, q, n, alias, matchCols, keys, paging, func(r *row) error {
+		out = append(out, r)
+		return nil
+	})
+	return out, err
+}
+
+// queryNodeEach is queryNode for the root (no key match), row by row.
+func queryNodeEach(ctx context.Context, q Querier, n *ReadNode, alias string, paging bool, fn func(*row) error) error {
+	return queryNodeKeys(ctx, q, n, alias, nil, nil, paging, fn)
+}
+
+func queryNodeKeys(ctx context.Context, q Querier, n *ReadNode, alias string, matchCols []string, keys [][]any, paging bool, fn func(*row) error) error {
 	b := &Builder{}
 	var sel []string
 	for _, f := range n.Fields {
@@ -334,7 +348,7 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 	b.W(" WHERE ")
 	ok, err := b.WriteWhere(n, alias, extra)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if !ok {
 		sqlText := strings.TrimSuffix(b.String(), " WHERE ")
@@ -355,15 +369,20 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		}
 	}
 	if err := b.WriteOrder(n, alias); err != nil {
-		return nil, err
+		return err
 	}
 	if paging {
 		b.WritePaging(n.Offset, n.Limit)
 	}
 
+	return scanNode(ctx, q, n, b, sel, matchCols, nHidden, fn)
+}
+
+// scanNode runs the built statement and hands each row to fn as it is read.
+func scanNode(ctx context.Context, q Querier, n *ReadNode, b *Builder, sel []string, matchCols []string, nHidden int, fn func(*row) error) error {
 	rs, err := q.QueryContext(ctx, b.String(), b.Args...)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer rs.Close()
 	nf := len(n.Fields)
@@ -384,7 +403,6 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 			}
 		}
 	}
-	var out []*row
 	ptrs := make([]any, total)
 	for rs.Next() {
 		vals := make([]any, total)
@@ -392,7 +410,7 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 			ptrs[i] = &vals[i]
 		}
 		if err := rs.Scan(ptrs...); err != nil {
-			return nil, err
+			return err
 		}
 		r := &row{obj: newObj(n)}
 		for i, f := range n.Fields {
@@ -404,9 +422,48 @@ func queryNode(ctx context.Context, q Querier, n *ReadNode, alias string, matchC
 		}
 		r.hidden = vals[nf : nf+nHidden]
 		r.match = vals[nf+nHidden : nf+nHidden+len(matchCols)]
-		out = append(out, r)
+		if err := fn(r); err != nil {
+			return err
+		}
 	}
-	return out, rs.Err()
+	return rs.Err()
+}
+
+// jsonChunk is the size at which ReadJSONArray hands a piece of the body
+// over: large enough for few calls, small enough that a piece's growth
+// (append doubles) costs little.
+const jsonChunk = 1 << 20
+
+// ReadJSONArray reads a tree without children and encodes each row as JSON
+// as it is read, handing the body over in chunks through sink, so a large
+// result costs its JSON size in memory, not the rows as well. It returns
+// the number of rows. Read does the same for trees with embedded resources,
+// whose rows must be kept until their children are attached.
+func ReadJSONArray(ctx context.Context, q Querier, n *ReadNode, sink func([]byte)) (int, error) {
+	buf := make([]byte, 0, 64<<10)
+	buf = append(buf, '[')
+	if n.Limit == 0 {
+		sink(append(buf, ']'))
+		return 0, nil
+	}
+	count := 0
+	err := queryNodeEach(ctx, q, n, "t0", true, func(r *row) error {
+		if count > 0 {
+			buf = append(buf, ',')
+		}
+		count++
+		buf = AppendJSON(buf, r.obj)
+		if len(buf) >= jsonChunk {
+			sink(buf)
+			buf = make([]byte, 0, 64<<10)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	sink(append(buf, ']'))
+	return count, nil
 }
 
 // executeComputed runs an executable procedure for one parent key and

@@ -89,31 +89,68 @@ func (s *Server) read(rc *reqCtx, rel *schema.Relation) error {
 // respondRead runs a read node and writes rows, Content-Range and status.
 func (s *Server) respondRead(rc *reqCtx, n *query.ReadNode) error {
 	ctx := rc.r.Context()
+	// A plain JSON array of a tree without embedded resources is encoded as
+	// the rows are read, so a large result costs its JSON size in memory
+	// rather than the rows and the JSON both (see query.ReadJSONArray). The
+	// body is still complete before the headers go out: Content-Range needs
+	// the number of rows.
+	if len(n.Children) == 0 && rawType(rc.r, mimeJSON, mimeObject, mimeCSV) == "" {
+		if mt, err := negotiate(rc.r, mimeJSON, mimeObject, mimeCSV); err == nil && mt == mimeJSON {
+			var chunks [][]byte
+			nrows, err := query.ReadJSONArray(ctx, rc.tx, n, func(b []byte) { chunks = append(chunks, b) })
+			if err != nil {
+				return err
+			}
+			status, err := s.rangeStatus(rc, n, nrows)
+			if err != nil {
+				return err
+			}
+			defer since(&rc.timing.response, time.Now())
+			writeBody(rc, status, mimeJSON, nil)
+			if rc.r.Method != http.MethodHead {
+				for _, b := range chunks {
+					rc.w.Write(b)
+				}
+			}
+			return nil
+		}
+	}
 	rows, err := query.Read(ctx, rc.tx, n, nil)
 	if err != nil {
 		return err
 	}
+	status, err := s.rangeStatus(rc, n, len(rows))
+	if err != nil {
+		return err
+	}
+	return writeRows(rc, status, rows)
+}
+
+// rangeStatus counts when asked, sets Content-Range for the nrows read, and
+// returns the status (200, 206 for a partial range, or 416).
+func (s *Server) rangeStatus(rc *reqCtx, n *query.ReadNode, nrows int) (int, error) {
 	total := int64(-1)
 	if rc.prefer.count != "" {
+		var err error
 		if total, err = s.count(rc, n); err != nil {
-			return err
+			return 0, err
 		}
 		// an estimate may be behind the rows actually there
-		if seen := int64(n.Offset + len(rows)); len(rows) > 0 && total < seen {
+		if seen := int64(n.Offset + nrows); nrows > 0 && total < seen {
 			total = seen
 		}
 	}
-	rc.w.Header().Set("Content-Range", contentRange(n.Offset, len(rows), total))
+	rc.w.Header().Set("Content-Range", contentRange(n.Offset, nrows, total))
 	rc.w.Header().Set("Range-Unit", "items")
 	status := http.StatusOK
-	if total >= 0 && int64(n.Offset+len(rows)) < total || (total >= 0 && n.Offset > 0) {
+	if total >= 0 && int64(n.Offset+nrows) < total || (total >= 0 && n.Offset > 0) {
 		status = http.StatusPartialContent
 	}
-	if total >= 0 && n.Offset > 0 && len(rows) == 0 && int64(n.Offset) >= total && total > 0 {
-		return &query.Error{Status: 416, Code: "FBRST103", Message: "requested range not satisfiable",
+	if total >= 0 && n.Offset > 0 && nrows == 0 && int64(n.Offset) >= total && total > 0 {
+		return 0, &query.Error{Status: 416, Code: "FBRST103", Message: "requested range not satisfiable",
 			Details: fmt.Sprintf("offset %d is beyond the %d available rows", n.Offset, total)}
 	}
-	return writeRows(rc, status, rows)
+	return status, nil
 }
 
 // rowValues validates body keys against the relation and coerces values.

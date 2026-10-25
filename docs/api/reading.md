@@ -117,6 +117,12 @@ Firebird has to skip those rows. For deep paging, filter on an indexed key inste
 
 `db-max-rows` caps every read, whatever the request asks for.
 
+A large page is encoded as its rows are read, so a result costs about its JSON size in memory
+on the server (a 100 MB response peaks near 200 MB of process memory); the response is sent
+once complete, because `Content-Range` needs the number of rows. Reads with embedded resources
+keep their rows until the children are attached and cost more. For exports, page with `limit`
+and `offset` or a `Range` header.
+
 ## Counting
 
 Send `Prefer: count=exact` to get the total in `Content-Range`:

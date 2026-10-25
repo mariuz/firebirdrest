@@ -32,6 +32,11 @@ type Config struct {
 	// seconds, releasing their metadata locks (0 = never).
 	DBPreparedStatementsIdle int
 	DBReloadEvent            string // POST_EVENT name that triggers a schema reload
+	// DBEvents lists the Firebird events clients may listen for at
+	// GET /events/<name>; empty disables the endpoint. DBEventsRoles limits
+	// listening to these roles (empty: any authenticated role).
+	DBEvents      []string
+	DBEventsRoles []string
 	// DBReadTxFresh gives every read its own transaction instead of reusing
 	// a read-only one per connection (db-read-tx-reuse = false).
 	DBReadTxFresh      bool
@@ -91,6 +96,8 @@ var keys = map[string]string{
 	"db-prepared-statements":      "FBREST_DB_PREPARED_STATEMENTS",
 	"db-prepared-statements-idle": "FBREST_DB_PREPARED_STATEMENTS_IDLE",
 	"db-reload-event":             "FBREST_DB_RELOAD_EVENT",
+	"db-events":                   "FBREST_DB_EVENTS",
+	"db-events-roles":             "FBREST_DB_EVENTS_ROLES",
 	"db-read-tx-reuse":            "FBREST_DB_READ_TX_REUSE",
 	"jwt-secret":                  "FBREST_JWT_SECRET",
 	"jwt-secret-is-base64":        "FBREST_JWT_SECRET_IS_BASE64",
@@ -249,6 +256,19 @@ func Load(path string) (*Config, error) {
 		if name = strings.TrimSpace(name); name != "" {
 			c.DBSchemas = append(c.DBSchemas, name)
 		}
+	}
+	for _, name := range strings.Split(get("FBREST_DB_EVENTS", ""), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			c.DBEvents = append(c.DBEvents, name)
+		}
+	}
+	for _, role := range strings.Split(get("FBREST_DB_EVENTS_ROLES", ""), ",") {
+		if role = strings.TrimSpace(role); role != "" {
+			c.DBEventsRoles = append(c.DBEventsRoles, role)
+		}
+	}
+	if len(c.DBEventsRoles) > 0 && len(c.DBEvents) == 0 {
+		c.Warnings = append(c.Warnings, "db-events-roles is set but db-events is empty: no event is exposed")
 	}
 	c.JWTSecretIsBase64 = getBool("FBREST_JWT_SECRET_IS_BASE64", false)
 	c.ServerTiming = getBool("FBREST_SERVER_TIMING_ENABLED", false)

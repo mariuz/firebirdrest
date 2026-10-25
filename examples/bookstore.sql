@@ -106,6 +106,16 @@ BEGIN
     EXCEPTION out_of_stock;
   INSERT INTO orders (customer_id) VALUES (:customer_id) RETURNING id INTO :order_id;
   INSERT INTO order_items (order_id, book_id, qty) VALUES (:order_id, :book_id, :qty);
+  -- delivered to GET /events/order_placed listeners when the transaction commits
+  POST_EVENT 'order_placed';
+END^
+
+-- posts an event by name: POST /rpc/notify {"name":"stock_changed"}
+-- (expose events with db-events = "order_placed, stock_changed")
+CREATE PROCEDURE notify (name VARCHAR(60))
+AS
+BEGIN
+  POST_EVENT :name;
 END^
 
 -- one text parameter: POST /rpc/log_request with Prefer: params=single-object
@@ -279,6 +289,7 @@ GRANT ALL ON orders TO ROLE web_user;
 GRANT ALL ON order_items TO ROLE web_user;
 GRANT EXECUTE ON PROCEDURE books_by_country TO ROLE web_user;
 GRANT EXECUTE ON PROCEDURE place_order TO ROLE web_user;
+GRANT EXECUTE ON PROCEDURE notify TO ROLE web_user;
 GRANT EXECUTE ON FUNCTION add_vat TO ROLE web_user;
 GRANT EXECUTE ON FUNCTION whoami TO ROLE web_user;
 GRANT EXECUTE ON PACKAGE catalog TO ROLE web_user;

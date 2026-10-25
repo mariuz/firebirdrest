@@ -77,6 +77,17 @@ A rising `firebirdrest_db_pool_waits_total` means requests queue for connections
 | `firebirdrest_jwks_fetches_total` | counter | fetches of `jwt-jwks-url` (only with it set) |
 | `firebirdrest_jwks_fetch_errors_total` | counter | failed fetches |
 
+### Events
+
+Only with `db-events` set ([realtime events](../api/events.md)).
+
+| Metric | Type | |
+|---|---|---|
+| `firebirdrest_event_streams` | gauge | open `/events` streams |
+| `firebirdrest_events_received_total{event}` | counter | notifications received from the database, by event |
+| `firebirdrest_events_delivered_total` | counter | notifications written to streams |
+| `firebirdrest_event_subscription_errors_total` | counter | times the subscription to the database was lost and renewed |
+
 ### Process
 
 | Metric | Type | |

@@ -38,6 +38,8 @@ type Server struct {
 	mu    sync.Mutex
 	pools map[string]*rolePool
 	basep *rolePool
+
+	events *eventHub // nil unless db-events is set
 }
 
 // rolePool is the connection pool of one Firebird role plus its statement cache.
@@ -73,6 +75,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 		db.Close()
 		return nil, err
 	}
+	s.startEvents()
 	return s, nil
 }
 
@@ -108,6 +111,9 @@ func (s *Server) Reload(ctx context.Context) error {
 
 // Close releases all connections.
 func (s *Server) Close() {
+	if s.events != nil {
+		s.events.close()
+	}
 	s.jwt.close()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -231,7 +237,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// type or running anything a value may contain
 	rw.Header().Set("X-Content-Type-Options", "nosniff")
 	rw.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	if s.cfg.ServerTimeout > 0 {
+	if s.cfg.ServerTimeout > 0 && !isEventStream(r) {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.cfg.ServerTimeout)*time.Second)
 		defer cancel()
 		r = r.WithContext(ctx)
@@ -332,6 +338,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 	since(&rc.timing.jwt, jwtStart)
 	if err != nil {
 		return err
+	}
+	if parts[0] == "events" {
+		if len(parts) != 2 {
+			return &query.Error{Status: 404, Code: "FBRST136", Message: "no event named",
+				Hint: "GET /events/<name>[,<name>...]"}
+		}
+		return s.streamEvents(rc, parts[1])
 	}
 	if rc.prefer.loc != nil {
 		if !hasTimeZones(sc.Version) {
@@ -671,6 +684,10 @@ type statusWriter struct {
 	http.ResponseWriter
 	status int
 }
+
+// Unwrap lets http.ResponseController reach the server's writer (to lift
+// the write deadline of an event stream and to flush it).
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code

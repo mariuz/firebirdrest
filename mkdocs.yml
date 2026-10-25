@@ -48,6 +48,7 @@ nav:
       - Writing: api/writing.md
       - Procedures and functions: api/rpc.md
       - Formats, OpenAPI and errors: api/formats-errors.md
+      - Realtime events: api/events.md
   - Reference:
       - Security and roles: references/security.md
       - Configuration: references/configuration.md

@@ -33,6 +33,23 @@ type metrics struct {
 	jwtCacheMisses atomic.Uint64
 	jwksFetches    atomic.Uint64
 	jwksErrors     atomic.Uint64
+
+	eventStreams   atomic.Int64  // open /events streams
+	eventDelivered atomic.Uint64 // notifications written to streams
+	eventErrors    atomic.Uint64 // times the subscription to the database was lost
+	eventsMu       sync.Mutex
+	events         map[string]uint64 // notifications received from the database, by event
+}
+
+// eventReceived counts a notification from the database. The label set is
+// the configured event names, so it stays bounded.
+func (m *metrics) eventReceived(name string) {
+	m.eventsMu.Lock()
+	if m.events == nil {
+		m.events = map[string]uint64{}
+	}
+	m.events[name]++
+	m.eventsMu.Unlock()
 }
 
 type reqKey struct {
@@ -240,6 +257,25 @@ func (s *Server) writeMetrics(out io.Writer) {
 	}
 
 	// JWT
+	if s.events != nil {
+		head("firebirdrest_event_streams", "gauge", "Open /events streams.")
+		fmt.Fprintf(&b, "firebirdrest_event_streams %d\n", m.eventStreams.Load())
+		head("firebirdrest_events_received_total", "counter", "Event notifications received from the database, by event.")
+		m.eventsMu.Lock()
+		names := make([]string, 0, len(m.events))
+		for n := range m.events {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			fmt.Fprintf(&b, "firebirdrest_events_received_total{event=%s} %d\n", lv(n), m.events[n])
+		}
+		m.eventsMu.Unlock()
+		head("firebirdrest_events_delivered_total", "counter", "Event notifications written to streams.")
+		fmt.Fprintf(&b, "firebirdrest_events_delivered_total %d\n", m.eventDelivered.Load())
+		head("firebirdrest_event_subscription_errors_total", "counter", "Times the event subscription to the database was lost and renewed.")
+		fmt.Fprintf(&b, "firebirdrest_event_subscription_errors_total %d\n", m.eventErrors.Load())
+	}
 	head("firebirdrest_jwt_cache_hits_total", "counter", "Tokens found in the JWT validation cache.")
 	fmt.Fprintf(&b, "firebirdrest_jwt_cache_hits_total %d\n", m.jwtCacheHits.Load())
 	head("firebirdrest_jwt_cache_misses_total", "counter", "Tokens validated because they were not in the cache.")

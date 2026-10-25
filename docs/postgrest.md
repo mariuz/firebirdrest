@@ -45,6 +45,7 @@ list below.
 | JWT keys from a URL | not built in | `jwt-jwks-url` fetches a provider's JWKS and follows key rotation |
 | JWT cache size | `jwt-cache-max-entries` | the same; entries also expire after 5 minutes and when the JWKS changes |
 | Schema reload | `NOTIFY pgrst` | `POST_EVENT 'fbrest_reload'` |
+| Realtime | not built in (Supabase Realtime is a separate service) | `GET /events/<name>` streams `POST_EVENT`s as Server-Sent Events ([events](api/events.md)) |
 | Unfiltered `PATCH`/`DELETE` | allowed (unless pg-safeupdate) | refused unless `db-safe-updates = false` |
 | Request context cost | always set | only when the database reads it (`db-request-context`) |
 | `params=single-object` | the body goes to a single `json` parameter | the body goes to a single text parameter, as JSON text |

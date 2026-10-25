@@ -6,6 +6,11 @@ All notable changes to FirebirdREST are listed here. The project follows
 ## [Unreleased]
 
 ### Added
+- Realtime events: `GET /events/<name>[,<name>...]` streams Firebird `POST_EVENT` notifications
+  as Server-Sent Events, for the names listed in `db-events` and the roles in `db-events-roles`.
+  One database attachment serves every stream; keepalives every 15 s; metrics for streams and
+  notifications ([events](https://mariuz.github.io/firebirdrest/api/events/)). The example
+  database posts `order_placed` from `place_order` and has a `notify(name)` procedure.
 - Query plans for writes: `Accept: application/vnd.pgrst.plan` on `POST`, `PATCH`, `PUT` and
   `DELETE` runs the request in a transaction that is always rolled back and returns the plans
   of its statements, as PostgREST does.

@@ -206,6 +206,13 @@ collection. They are recycled after 1000 requests or 5 minutes, and request cont
 set by one request are cleared by the next. `db-read-tx-reuse = false` gives every read its
 own transaction. Query plan requests always use a fresh transaction.
 
+## Events
+
+`GET /events/<name>` streams Firebird event notifications, which carry only a name and a count.
+Only the names in `db-events` are exposed, to the roles in `db-events-roles` (any authenticated
+role when unset). A listener learns that something happened, and reads what through the API with
+its own grants. See [realtime events](../api/events.md).
+
 ## Other safeguards
 
 - `PATCH` and `DELETE` without filters are refused (`db-safe-updates`).

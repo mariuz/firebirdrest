@@ -182,6 +182,9 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST130` | an unknown or invalid preference with `Prefer: handling=strict` |
 | `FBRST131` | a `PATCH`/`DELETE` would affect more rows than `Prefer: max-affected` |
 | `FBRST134` | the request body is larger than `server-max-body-size` (`413`) |
+| `FBRST135` | `GET /events/...` while `db-events` is empty (`404`) |
+| `FBRST136` | an event name that isn't in `db-events` (`404`) |
+| `FBRST137` | the role is not in `db-events-roles` (`403`, `401` when anonymous) |
 | `FBRST133` | a raw request body (`text/plain`, `application/octet-stream`...) sent to a routine that doesn't have exactly one parameter |
 | `FBRST132` | a query plan was asked for a method without statements (`OPTIONS`) |
 | `FBRST200` | no relationship between the tables |

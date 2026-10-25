@@ -31,6 +31,8 @@ $ curl 'http://localhost:3000/books?select=title,price,authors(name)&price=lt.10
 - **[Security through Firebird roles](references/security.md)**: a JWT's `role` claim selects the
   Firebird `ROLE`, and claims can be read in PSQL for row-level rules.
 - **OpenAPI 3** description at `/`, CSV output, health endpoints, schema reload on `POST_EVENT`.
+- **[Realtime events](api/events.md)**: Firebird `POST_EVENT`s streamed to clients as Server-Sent
+  Events, something PostgREST does not have.
 - Firebird **3, 4 and 5**, all tested in CI, plus early testing against the
   [Firebird 6 snapshot](references/deployment.md#firebird-6).
 - **[SQL schemas](references/schemas.md)** on Firebird 6 (experimental), chosen per request with `Accept-Profile`

@@ -48,9 +48,9 @@ list below.
 | Unfiltered `PATCH`/`DELETE` | allowed (unless pg-safeupdate) | refused unless `db-safe-updates = false` |
 | Request context cost | always set | only when the database reads it (`db-request-context`) |
 | `params=single-object` | the body goes to a single `json` parameter | the body goes to a single text parameter, as JSON text |
-| `params=multiple-objects` on set-returning routines | no limit | at most 200 objects per request |
+| `params=multiple-objects` on set-returning routines | no limit | at most 1024 objects per request, their arguments within 48 KB |
 | `count=planned` | the planner's estimate of the query | the table's row count from index statistics; exact for filtered requests, views and procedures |
-| Query plans | `EXPLAIN` output (text or JSON), also for writes | Firebird's explained plan per statement, for `GET`/`HEAD` only |
+| Query plans | `EXPLAIN` output (text or JSON), also for writes | Firebird's explained plan per statement, as text or as a JSON tree, also for writes (rolled back) |
 | `Prefer: timezone` | changes how `timestamptz` is displayed | `WITH TIME ZONE` values carry a zone in Firebird, so they are converted to the requested zone; ignored on Firebird 3 |
 
 | Custom media types | handler functions per media type | any concrete `Accept` type returns a single value as is ([details](api/formats-errors.md#single-values-and-files)); a raw request body goes to a routine's only parameter |

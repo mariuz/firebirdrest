@@ -37,7 +37,7 @@ Each is marked as such in its documentation.
 |---|---|
 | [SQL schemas](schemas.md) (`db-schemas`, `Accept-Profile` on Firebird 6) | Firebird 6 is not released; its schema catalog may still change. |
 | Firebird 6 support in general | Tested against the nightly snapshot in CI, with known driver issues listed under [Deployment](deployment.md#firebird-6). |
-| Query plan output (`Accept: application/vnd.pgrst.plan`) | The text is Firebird's explained plan, which differs between Firebird versions; the JSON shape `[{query, plan}]` is stable, the plan text is not. |
+| Query plan output (`Accept: application/vnd.pgrst.plan`) | The text is Firebird's explained plan, which differs between Firebird versions; the JSON shape `[{query, plan, tree}]` is stable, the plan text and the node texts of the tree are not. |
 | `Server-Timing` metric names | Follow PostgREST's; may gain entries. |
 
 ## Not covered

@@ -17,10 +17,11 @@ import (
 // is off unless db-plan-enabled is set, since plans reveal tables and indexes.
 //
 // Embedded resources are read with one statement per level, built from the
-// keys of the level above, so the request is run (in its read-only
-// transaction, output discarded) to learn every statement; each one is then
-// prepared again and its plan read from the monitoring tables. Only GET and
-// HEAD are allowed, so nothing is written.
+// keys of the level above, so the request is run (output discarded) to learn
+// every statement; each one is then prepared again and its plan read from
+// the monitoring tables. A write runs too, in a transaction that is always
+// rolled back, so the plan of an UPDATE or DELETE shows the rows it would
+// touch; a plain INSERT has no plan in Firebird (an empty one is returned).
 
 const mimePlan = "application/vnd.pgrst.plan"
 
@@ -33,6 +34,56 @@ type planCapture struct {
 type statementPlan struct {
 	Query string `json:"query"`
 	Plan  string `json:"plan"`
+}
+
+// planNode is one line of an explained plan with the lines nested under it:
+// Firebird indents each level by four spaces after an arrow.
+type planNode struct {
+	Node     string
+	Children []*planNode
+}
+
+// planTree parses Firebird's explained plan text into trees, one per
+// top-level expression (a statement can have several: sub-queries, and the
+// statements of a block).
+func planTree(text string) []*planNode {
+	var roots []*planNode
+	var stack []*planNode // the node at each depth
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		depth := 0
+		for strings.HasPrefix(line, "    ") {
+			line = line[4:]
+			depth++
+		}
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "->"))
+		n := &planNode{Node: line}
+		if depth > len(stack) {
+			depth = len(stack)
+		}
+		stack = stack[:depth]
+		if depth == 0 {
+			roots = append(roots, n)
+		} else {
+			parent := stack[depth-1]
+			parent.Children = append(parent.Children, n)
+		}
+		stack = append(stack, n)
+	}
+	return roots
+}
+
+func (n *planNode) obj() *query.Obj {
+	o := &query.Obj{}
+	o.Set("node", n.Node)
+	kids := make([]any, len(n.Children))
+	for i, c := range n.Children {
+		kids[i] = c.obj()
+	}
+	o.Set("children", kids)
+	return o
 }
 
 // planFormat returns "text" or "json" when the Accept header asks for a plan.
@@ -57,10 +108,11 @@ func (s *Server) startPlan(rc *reqCtx, format string) error {
 		return &query.Error{Status: 406, Code: "FBRST107", Message: "query plans are disabled",
 			Hint: "set db-plan-enabled = true to allow Accept: " + mimePlan}
 	}
-	if rc.r.Method != http.MethodGet && rc.r.Method != http.MethodHead {
+	switch rc.r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete:
+	default:
 		return &query.Error{Status: 405, Code: "FBRST132",
-			Message: "query plans are available for GET and HEAD requests only",
-			Hint:    "a plan of a write would require running it"}
+			Message: "query plans are available for GET, HEAD, POST, PATCH, PUT and DELETE requests"}
 	}
 	target := mimeJSON
 	for _, part := range strings.Split(rc.r.Header.Get("Accept"), ",") {
@@ -155,6 +207,12 @@ func (p *planCapture) write(w http.ResponseWriter) error {
 			o := &query.Obj{}
 			o.Set("query", sp.Query)
 			o.Set("plan", sp.Plan)
+			roots := planTree(sp.Plan)
+			tree := make([]any, len(roots))
+			for i, r := range roots {
+				tree[i] = r.obj()
+			}
+			o.Set("tree", tree)
 			b = query.AppendJSON(b, o)
 		}
 		b = append(b, ']')

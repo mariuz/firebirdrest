@@ -106,23 +106,16 @@ func (s *Server) rpc(rc *reqCtx, rt *schema.Routine) error {
 			}
 			return writeRows(rc, http.StatusOK, nil)
 		}
-		if len(calls) > maxUnionCalls {
-			return &query.Error{Status: 400, Code: "FBRST128",
-				Message: fmt.Sprintf("too many calls: %d objects, at most %d for a selectable procedure", len(calls), maxUnionCalls),
-				Hint:    "split the array over several requests"}
-		}
 		if len(calls) == 1 {
 			n.From, n.FromArgs = callSQL(rt, calls[0])
 		} else {
 			// one query over all calls, so select=, filters, order and limit
 			// apply to the combined result
-			parts := make([]string, len(calls))
-			for i, args := range calls {
-				call, vals := callSQL(rt, args)
-				parts[i] = "SELECT * FROM " + call
-				n.FromArgs = append(n.FromArgs, vals...)
+			from, args, err := multiCallSQL(rt, calls)
+			if err != nil {
+				return err
 			}
-			n.From = "(" + strings.Join(parts, " UNION ALL ") + ")"
+			n.From, n.FromArgs = from, args
 		}
 		if err := applyRange(rc.r, n, p); err != nil {
 			return err
@@ -173,10 +166,95 @@ func (s *Server) rpc(rc *reqCtx, rt *schema.Routine) error {
 	}
 }
 
-// maxUnionCalls caps a multiple-objects call of a selectable procedure:
-// Firebird allows 256 procedure/table contexts per statement, and each
-// call is one branch of a UNION ALL.
-const maxUnionCalls = 200
+// Limits of a multiple-objects call of a selectable procedure in one
+// statement: the calls are driven by a recursive CTE, which Firebird limits
+// to 1024 levels, and every argument of every call is a parameter of the
+// statement's input message, which must stay under 64 KB.
+const (
+	maxMultiCalls      = 1024
+	maxMultiParamBytes = 48 << 10
+)
+
+// multiCallSQL builds the FROM clause that calls a selectable procedure once
+// per object, as one statement. A UNION ALL of the calls would cost a
+// procedure context per call, of the 256 a statement may have; instead a
+// recursive CTE counts the calls and the arguments of call i are picked by
+// CASE from the parameters, so the procedure is one context however many
+// calls there are:
+//
+//	(WITH RECURSIVE n AS (SELECT 1 i FROM RDB$DATABASE UNION ALL SELECT i + 1 FROM n WHERE i < 3)
+//	 SELECT p.* FROM n CROSS JOIN proc(CASE n.i WHEN 1 THEN CAST(? AS T) WHEN 2 THEN ... END, ...) p)
+//
+// The arguments are cast to the parameter's type because a parameter inside
+// CASE has no type of its own. The output columns keep the procedure's names.
+func multiCallSQL(rt *schema.Routine, calls []map[string]any) (string, []any, error) {
+	if len(calls) > maxMultiCalls {
+		return "", nil, &query.Error{Status: 400, Code: "FBRST128",
+			Message: fmt.Sprintf("too many calls: %d objects, at most %d for a selectable procedure", len(calls), maxMultiCalls),
+			Hint:    "split the array over several requests"}
+	}
+	// the arguments every call passes: up to the last one any call gives,
+	// then the parameters without a default (nil), as callSQL does
+	last := -1
+	for _, args := range calls {
+		for i, c := range rt.In {
+			if _, ok := args[c.DBName]; ok && i > last {
+				last = i
+			}
+		}
+	}
+	for i := last + 1; i < len(rt.In); i++ {
+		if !rt.In[i].HasDefault {
+			last = i
+		} else {
+			break
+		}
+	}
+	// the type each argument is cast to: text as wide as the longest value
+	// given (not the parameter's declared width, which would make 600 calls
+	// of a VARCHAR(60) parameter exceed the message), the rest as declared
+	types := make([]string, last+1)
+	size := 0
+	for i := 0; i <= last; i++ {
+		c := rt.In[i]
+		types[i] = c.SQLType()
+		switch c.FieldType {
+		case schema.TVarchar, schema.TChar, schema.TCString:
+			n := 1
+			for _, args := range calls {
+				if str, ok := args[c.DBName].(string); ok && utf8.RuneCountInString(str) > n {
+					n = utf8.RuneCountInString(str)
+				}
+			}
+			types[i] = fmt.Sprintf("VARCHAR(%d)", n)
+			size += (n*4 + 2) * len(calls)
+		default:
+			size += paramBytes(c) * len(calls)
+		}
+	}
+	if size > maxMultiParamBytes {
+		return "", nil, &query.Error{Status: 400, Code: "FBRST128",
+			Message: fmt.Sprintf("too many calls: the arguments of %d objects exceed the %d KB a statement's parameters may take", len(calls), maxMultiParamBytes>>10),
+			Hint:    "split the array over several requests"}
+	}
+	var sb strings.Builder
+	var vals []any
+	fmt.Fprintf(&sb, "(WITH RECURSIVE n AS (SELECT 1 AS i FROM RDB$DATABASE UNION ALL SELECT n.i + 1 FROM n WHERE n.i < %d) SELECT p.* FROM n CROSS JOIN %s(", len(calls), rt.SQLName())
+	for i := 0; i <= last; i++ {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		c := rt.In[i]
+		sb.WriteString("CASE n.i")
+		for j, args := range calls {
+			fmt.Fprintf(&sb, " WHEN %d THEN CAST(? AS %s)", j+1, types[i])
+			vals = append(vals, args[c.DBName])
+		}
+		sb.WriteString(" END")
+	}
+	sb.WriteString(") p)")
+	return sb.String(), vals, nil
+}
 
 // jsonArgs maps one JSON object of arguments to parameter DB names.
 func jsonArgs(rt *schema.Routine, row map[string]any) (map[string]any, error) {

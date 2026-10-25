@@ -5,6 +5,18 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- Query plans for writes: `Accept: application/vnd.pgrst.plan` on `POST`, `PATCH`, `PUT` and
+  `DELETE` runs the request in a transaction that is always rolled back and returns the plans
+  of its statements, as PostgREST does.
+- `application/vnd.pgrst.plan+json` adds `tree`, the explained plan parsed into
+  `{node, children}` nodes, next to the text in `plan`.
+
+### Changed
+- `Prefer: params=multiple-objects` on a selectable procedure takes up to 1024 objects (their
+  arguments within 48 KB) instead of 200: the calls are driven by a counting CTE in one
+  statement, so the procedure is one context however many objects there are.
+
 ## [0.4.0] - 2026-10-24
 
 ### Changed

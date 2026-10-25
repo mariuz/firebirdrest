@@ -94,11 +94,15 @@ Here `price` has no index, so the books are read with a full scan.
 
 - The response lists every statement the request runs: one per embed level, and the count with
   `Prefer: count=exact`. The plan is Firebird's explained plan (`MON$EXPLAINED_PLAN`).
-- `application/vnd.pgrst.plan+json` returns `[{"query": "...", "plan": "..."}]`;
+- `application/vnd.pgrst.plan+json` returns `[{"query": "...", "plan": "...", "tree": [...]}]`:
+  the plan as text and parsed into nodes, each `{"node": "Filter", "children": [...]}`, one tree
+  per expression of the statement (a sub-query or a block's statements add trees).
   `application/vnd.pgrst.plan` and `+text` return text.
-- Plans are available for `GET` and `HEAD` (reads and selectable procedures). To know the
-  statements of embedded resources the request is run in its read-only transaction, with the
-  result discarded. Other methods are refused with `405` (`FBRST132`): they would have to write.
+- Plans are available for every method. To know the statements of embedded resources the
+  request is run with its result discarded; a `POST`, `PATCH`, `PUT` or `DELETE` runs in a
+  transaction that is always rolled back, so nothing is written. Firebird has no plan for a
+  plain `INSERT` (an empty one is shown); multi-row inserts show their `EXECUTE BLOCK`, and
+  `UPDATE` and `DELETE` show how the rows are found.
 - With plans disabled, the plan media types get `406`.
 
 ## OpenAPI
@@ -173,13 +177,13 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST125` | invalid path |
 | `FBRST126` | `order=embed(column)` on a to-many embed, or together with aggregates |
 | `FBRST127` | `PATCH`/`DELETE` with `limit` but no `order`, or `offset` without `limit` |
-| `FBRST128` | more than 200 objects for a selectable procedure with `params=multiple-objects` |
+| `FBRST128` | more than 1024 objects for a selectable procedure with `params=multiple-objects`, or arguments over 48 KB in all |
 | `FBRST129` | `params=single-object` on a routine without exactly one text parameter |
 | `FBRST130` | an unknown or invalid preference with `Prefer: handling=strict` |
 | `FBRST131` | a `PATCH`/`DELETE` would affect more rows than `Prefer: max-affected` |
 | `FBRST134` | the request body is larger than `server-max-body-size` (`413`) |
 | `FBRST133` | a raw request body (`text/plain`, `application/octet-stream`...) sent to a routine that doesn't have exactly one parameter |
-| `FBRST132` | a query plan was asked for a method other than `GET`/`HEAD` |
+| `FBRST132` | a query plan was asked for a method without statements (`OPTIONS`) |
 | `FBRST200` | no relationship between the tables |
 | `FBRST201` | several relationships, `!hint` needed |
 | `FBRST202` | unknown procedure or function, or unknown argument |

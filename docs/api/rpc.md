@@ -43,11 +43,12 @@ curl -X POST 'localhost:3000/rpc/add_vat' -H 'Prefer: params=multiple-objects' \
 | Executable procedure | an array with the output parameters of each call, or `204` if it has none |
 | PSQL function | an array with the value of each call |
 
-- For a selectable procedure the calls are combined into one query (`UNION ALL`), so `select`,
-  filters, `order`, `limit` and `Prefer: count` apply to the combined rows:
+- For a selectable procedure the calls are combined into one query, so `select`, filters,
+  `order`, `limit` and `Prefer: count` apply to the combined rows:
   `POST /rpc/books_by_country?order=price&limit=5` with `[{"country":"UK"},{"country":"USA"}]`
-  returns the 5 cheapest books of both countries. Firebird allows 256 procedures per statement,
-  so this takes at most 200 objects (`FBRST128`); split larger arrays.
+  returns the 5 cheapest books of both countries. The query calls the procedure once per row of
+  a counting CTE, with each call's arguments as parameters, so it takes up to 1024 objects, as
+  long as their arguments fit in 48 KB in all (`FBRST128`); split larger arrays.
 - The calls run in the request's transaction: if one fails, none of them is saved.
 - A single object instead of an array is one call, and the response is still an array.
 

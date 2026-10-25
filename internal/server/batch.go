@@ -148,7 +148,7 @@ type batchPreparer interface {
 // path, which also reports the proper error for a value that doesn't fit.
 func batchable(rc *reqCtx, rel *schema.Relation, resolution string, rows []rowData) bool {
 	if resolution != "" || rel.IsView || len(rows) < 2 || rc.prefer.ret == "representation" ||
-		schema.MajorVersion(rc.sc.Version) < 4 || rc.tx.conn == nil {
+		schema.MajorVersion(rc.sc.Version) < 4 || rc.tx.conn == nil || rc.plan != nil {
 		return false
 	}
 	for _, d := range rows {

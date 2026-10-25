@@ -495,6 +495,20 @@ func TestRPCParams(t *testing.T) {
 	if cr := r.header.Get("Content-Range"); cr != "*/0" {
 		t.Errorf("empty Content-Range %q", cr)
 	}
+	// many calls (more than the 256 contexts a statement may have) in one statement
+	var callList []string
+	for i := 0; i < 600; i++ {
+		callList = append(callList, `{"country":"UK"}`)
+	}
+	r = do(t, ts, "POST", "/rpc/books_by_country?select=title&order=title&offset=1198", "["+strings.Join(callList, ",")+"]",
+		"Prefer", multi, "Prefer", "count=exact")
+	if r.status != 206 || r.body != `[{"title":"Small Gods"},{"title":"Small Gods"}]` || r.header.Get("Content-Range") != "1198-1199/1200" {
+		t.Errorf("600 calls: %d %s %q", r.status, r.body, r.header.Get("Content-Range"))
+	}
+	callList = append(callList, callList...) // 1200: over the limit
+	if r = do(t, ts, "POST", "/rpc/books_by_country", "["+strings.Join(callList, ",")+"]", "Prefer", multi); r.status != 400 || !strings.Contains(r.body, "FBRST128") {
+		t.Errorf("too many calls: %d %s", r.status, r.body)
+	}
 
 	// function: an array of results; a single object is one call
 	r = do(t, ts, "POST", "/rpc/add_vat", `[{"amount":100},{"amount":100,"rate":10},{"amount":"50"}]`, "Prefer", multi)
@@ -531,9 +545,7 @@ func TestRPCParams(t *testing.T) {
 	do(t, ts, "DELETE", fmt.Sprintf("/api_log?id=eq.%d", logged.ID), "", "Authorization", user) // committed above; clean up
 
 	// errors
-	many := strings.Repeat(`{"country":"UK"},`, 200) + `{"country":"UK"}`
 	for _, c := range []struct{ path, body, prefer, code string }{
-		{"/rpc/books_by_country", "[" + many + "]", multi, "FBRST128"},         // over the UNION limit
 		{"/rpc/add_vat", `[{"amount":1},{"nope":1}]`, multi, "FBRST202"},       // unknown argument
 		{"/rpc/add_vat", `[{"amount":1}]`, "", "FBRST102"},                     // array without the preference
 		{"/rpc/add_vat", `{"amount":1}`, "params=single-object", "FBRST129"},   // two parameters
@@ -648,9 +660,16 @@ func TestQueryPlans(t *testing.T) {
 		t.Errorf("postgrest-js plan header: %d %s", r.status, r.body)
 	}
 	r = do(t, ts, "GET", "/books?select=id&id=eq.1", "", "Accept", `application/vnd.pgrst.plan+json; for="text/csv"`)
-	var plans []struct{ Query, Plan string }
+	var plans []struct {
+		Query, Plan string
+		Tree        []struct {
+			Node     string
+			Children []json.RawMessage
+		}
+	}
 	if err := json.Unmarshal([]byte(r.body), &plans); err != nil || len(plans) != 1 ||
-		!strings.Contains(plans[0].Plan, "Unique Scan") {
+		!strings.Contains(plans[0].Plan, "Unique Scan") || len(plans[0].Tree) != 1 ||
+		plans[0].Tree[0].Node != "Select Expression" || len(plans[0].Tree[0].Children) != 1 {
 		t.Errorf("json plan: %d %s", r.status, r.body)
 	}
 	// a selectable procedure
@@ -662,12 +681,42 @@ func TestQueryPlans(t *testing.T) {
 	if r = do(t, ts, "GET", "/books?select=nope", "", "Accept", "application/vnd.pgrst.plan"); r.status != 400 {
 		t.Errorf("bad request plan: %d %s", r.status, r.body)
 	}
-	// writes would have to run: refused
-	for _, m := range []string{"POST", "PATCH", "DELETE"} {
-		if r = do(t, ts, m, "/books?id=eq.1", `{"price":1}`, "Accept", "application/vnd.pgrst.plan"); r.status != 405 ||
-			!strings.Contains(r.body, "FBRST132") {
-			t.Errorf("%s plan: %d %s", m, r.status, r.body)
-		}
+	// writes run in a transaction that is rolled back: the plan comes back, the data stays
+	user := "Bearer " + token(t, jwt.MapClaims{"role": "web_user"})
+	r = do(t, ts, "PATCH", "/books?id=eq.1", `{"price":1}`, "Authorization", user, "Accept", "application/vnd.pgrst.plan")
+	if r.status != 200 || !strings.Contains(r.body, `"BOOKS" t0 SET`) || !strings.Contains(r.body, "RDB$PRIMARY") {
+		t.Errorf("PATCH plan: %d %s", r.status, r.body)
+	}
+	r = do(t, ts, "DELETE", "/tags?name=eq.fantasy", "", "Authorization", user, "Accept", "application/vnd.pgrst.plan+json")
+	if r.status != 200 || !strings.Contains(r.body, `\"TAGS\" t0 WHERE`) || !strings.Contains(r.body, `"tree":[{"node":"Select Expression"`) {
+		t.Errorf("DELETE plan: %d %s", r.status, r.body)
+	}
+	r = do(t, ts, "POST", "/tags", `[{"name":"plan-a"},{"name":"plan-b"},{"name":"plan-c"}]`, "Authorization", user, "Accept", "application/vnd.pgrst.plan")
+	if r.status != 200 || !strings.Contains(r.body, "EXECUTE BLOCK") || !strings.Contains(r.body, `"TAGS" ("NAME")`) {
+		t.Errorf("POST plan: %d %s", r.status, r.body)
+	}
+	if r = do(t, ts, "GET", "/books?select=price&id=eq.1", ""); r.body != `[{"price":9.99}]` {
+		t.Errorf("the planned update was committed: %s", r.body)
+	}
+	if r = do(t, ts, "GET", "/tags?select=name&name=in.(fantasy,plan-a)&order=name", ""); r.body != `[{"name":"fantasy"}]` {
+		t.Errorf("the planned delete or insert was committed: %s", r.body)
+	}
+	if r = do(t, ts, "OPTIONS", "/books", "", "Accept", "application/vnd.pgrst.plan"); r.status == 200 && strings.Contains(r.body, "Select Expression") {
+		t.Errorf("OPTIONS plan: %d %s", r.status, r.body)
+	}
+}
+
+func TestPlanTree(t *testing.T) {
+	text := "Select Expression\n    -> Filter\n        -> Table \"BOOKS\" as \"T0\" Access By ID\n            -> Bitmap\n                -> Index \"RDB$PRIMARY2\" Unique Scan\n\nSub-query\n    -> Table \"AUTHORS\" Full Scan\n"
+	roots := planTree(text)
+	if len(roots) != 2 || roots[0].Node != "Select Expression" || roots[1].Node != "Sub-query" ||
+		len(roots[0].Children) != 1 || roots[0].Children[0].Node != "Filter" ||
+		roots[0].Children[0].Children[0].Children[0].Children[0].Node != `Index "RDB$PRIMARY2" Unique Scan` ||
+		roots[1].Children[0].Node != `Table "AUTHORS" Full Scan` {
+		t.Errorf("tree: %+v", roots)
+	}
+	if n := planTree(""); len(n) != 0 {
+		t.Errorf("empty plan: %+v", n)
 	}
 }
 

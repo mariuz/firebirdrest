@@ -537,7 +537,9 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 		p.releaseRead(rt, err != nil && connectionLost(err))
 	} else if err != nil {
 		tx.Rollback()
-	} else if rc.prefer.tx == "rollback" {
+	} else if rc.prefer.tx == "rollback" || rc.plan != nil {
+		// a plan request runs the statements (a write included) only to
+		// learn them: never committed
 		err = tx.Rollback()
 	} else {
 		err = tx.Commit()

@@ -20,7 +20,39 @@ They are based on distroless and run as a non-root user.
 [`docker-compose.yml`](https://github.com/mariuz/firebirdrest/blob/main/docker-compose.yml) in the
 repository runs Firebird, FirebirdREST and Swagger UI together.
 
+## Debian, Ubuntu, RHEL, Fedora: packages
+
+Every release has `.deb` and `.rpm` packages for amd64 and arm64. They install the binary, a
+hardened systemd service that runs as a `firebirdrest` system user, and a configuration in
+`/etc/firebirdrest/` that upgrades leave alone:
+
+```sh
+# Debian, Ubuntu
+curl -LO https://github.com/mariuz/firebirdrest/releases/download/v0.6.0/firebirdrest_0.6.0_amd64.deb
+sudo apt install ./firebirdrest_0.6.0_amd64.deb
+# RHEL, Rocky, Alma, Fedora, openSUSE
+sudo dnf install https://github.com/mariuz/firebirdrest/releases/download/v0.6.0/firebirdrest-0.6.0.x86_64.rpm
+
+sudoedit /etc/firebirdrest/firebirdrest.conf        # db-uri, jwt-secret, ...
+sudo systemctl enable --now firebirdrest
+```
+
+| Path | |
+|---|---|
+| `/usr/bin/firebirdrest` | the binary |
+| `/etc/firebirdrest/firebirdrest.conf` | the configuration, `root:firebirdrest`, mode `0640` (it holds the database password); kept on upgrade and on removal |
+| `/usr/lib/systemd/system/firebirdrest.service` | the service; override settings with `systemctl edit firebirdrest` |
+| `/usr/share/doc/firebirdrest/` | README, changelog, license and the example database scripts |
+
+The service checks the configuration (`firebirdrest -check`) before starting, so a typo shows up
+in `systemctl status firebirdrest` instead of a crash loop. `systemctl reload firebirdrest`
+reloads the TLS certificate and the schema cache. The first install doesn't start the service;
+an upgrade restarts it if it was running. Logs go to the journal:
+`journalctl -u firebirdrest -f`.
+
 ## systemd
+
+Without the packages, the same unit works for a binary in `/usr/local/bin`:
 
 ```ini
 # /etc/systemd/system/firebirdrest.service
@@ -30,8 +62,10 @@ After=network-online.target firebird.service
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/firebirdrest /etc/firebirdrest.conf
-ExecReload=/bin/kill -USR1 $MAINPID
+ExecStartPre=/usr/local/bin/firebirdrest -check /etc/firebirdrest/firebirdrest.conf
+ExecStart=/usr/local/bin/firebirdrest /etc/firebirdrest/firebirdrest.conf
+# SIGHUP reloads the TLS certificate and the schema cache; SIGUSR1 only the schema cache
+ExecReload=/bin/sh -c 'kill -HUP $MAINPID'
 Restart=on-failure
 DynamicUser=yes
 NoNewPrivileges=yes
@@ -41,11 +75,40 @@ ProtectSystem=strict
 WantedBy=multi-user.target
 ```
 
-`systemctl reload firebirdrest` then reloads the schema cache.
+The packaged unit adds further hardening; see
+[`packaging/firebirdrest.service`](https://github.com/mariuz/firebirdrest/blob/main/packaging/firebirdrest.service).
+
+## TLS
+
+FirebirdREST can serve HTTPS itself, without a reverse proxy:
+
+```ini
+server-tls-cert = "/etc/firebirdrest/tls/fullchain.pem"   # certificate and chain, PEM
+server-tls-key = "/etc/firebirdrest/tls/privkey.pem"
+```
+
+It speaks TLS 1.2 and 1.3, and HTTP/2 when the client offers it (event streams included). The
+certificate is read at startup, checked by `firebirdrest -check` (which prints its expiry), and
+read again on `SIGHUP` (`systemctl reload firebirdrest`): new connections get the renewed
+certificate, open ones keep theirs, and a renewal that fails to load keeps the current
+certificate and logs an error. A certificate that expires within 14 days is logged as a warning
+at startup and on reload. With Let's Encrypt and certbot, a deploy hook copies the files where the
+service user can read them and reloads:
+
+```sh
+# /etc/letsencrypt/renewal-hooks/deploy/firebirdrest
+#!/bin/sh
+install -m 0640 -g firebirdrest "$RENEWED_LINEAGE/fullchain.pem" "$RENEWED_LINEAGE/privkey.pem" /etc/firebirdrest/tls/
+systemctl reload firebirdrest
+```
+
+The admin server (`admin-server-port`: health checks, metrics) stays plain HTTP; keep it on a
+local or private address. On Windows a renewed certificate needs a restart.
 
 ## Behind a reverse proxy
 
-Put TLS and rate limiting in front of FirebirdREST, for example with nginx:
+A reverse proxy is the place for rate limiting, and for TLS when it terminates several services;
+for example with nginx:
 
 ```nginx
 location /api/ {

@@ -37,6 +37,60 @@ archives:
       - CHANGELOG.md
       - examples/*
 
+# Debian/Ubuntu and RHEL/Fedora/SUSE packages: the binary, a systemd unit and a
+# configuration in /etc/firebirdrest (kept on upgrade), run as the firebirdrest user.
+nfpms:
+  - id: packages
+    package_name: firebirdrest
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+    ids: [firebirdrest]
+    formats: [deb, rpm]
+    vendor: FirebirdREST
+    homepage: https://mariuz.github.io/firebirdrest/
+    maintainer: Marius Popa <mapopa@gmail.com>
+    description: |-
+      Serve a RESTful API from any Firebird database.
+      FirebirdREST turns a Firebird 3, 4, 5 or 6 database into a REST API with
+      PostgREST's URL grammar: filtering, embedding, aggregates, writes, stored
+      procedures, Firebird roles from JWTs, OpenAPI, metrics and traces.
+    license: MIT
+    section: database
+    priority: optional
+    bindir: /usr/bin
+    contents:
+      - src: packaging/firebirdrest.service
+        dst: /usr/lib/systemd/system/firebirdrest.service
+        file_info:
+          mode: 0644
+      - dst: /etc/firebirdrest
+        type: dir
+        file_info:
+          mode: 0750
+      - src: packaging/firebirdrest.conf
+        dst: /etc/firebirdrest/firebirdrest.conf
+        type: config|noreplace
+        file_info:
+          mode: 0640
+      - src: README.md
+        dst: /usr/share/doc/firebirdrest/README.md
+      - src: CHANGELOG.md
+        dst: /usr/share/doc/firebirdrest/CHANGELOG.md
+      - src: LICENSE
+        dst: /usr/share/doc/firebirdrest/copyright
+      - src: examples/*.sql
+        dst: /usr/share/doc/firebirdrest/examples/
+    scripts:
+      preinstall: packaging/scripts/preinstall.sh
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+    overrides:
+      deb:
+        dependencies: [passwd]
+      rpm:
+        dependencies: [shadow-utils]
+        file_name_template: "{{ .PackageName }}-{{ .Version }}.{{ if eq .Arch \"amd64\" }}x86_64{{ else if eq .Arch \"arm64\" }}aarch64{{ else }}{{ .Arch }}{{ end }}"
+
 checksum:
   name_template: checksums.txt
 
@@ -98,5 +152,6 @@ release:
   # a release drafted on GitHub first gets these notes instead of its own text
   mode: replace
   header: |
-    Binaries for Linux, macOS, Windows and FreeBSD are attached below. The Docker image is
+    Binaries for Linux, macOS, Windows and FreeBSD, and .deb and .rpm packages with a systemd
+    service, are attached below. The Docker image is
     `ghcr.io/mariuz/firebirdrest:{{ .Version }}`. See [CHANGELOG.md](https://github.com/mariuz/firebirdrest/blob/{{ .Tag }}/CHANGELOG.md) for details.

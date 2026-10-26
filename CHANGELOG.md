@@ -6,6 +6,15 @@ All notable changes to FirebirdREST are listed here. The project follows
 ## [Unreleased]
 
 ### Added
+- Built-in TLS: `server-tls-cert` and `server-tls-key` serve HTTPS (TLS 1.2+, HTTP/2). `SIGHUP`
+  reloads the certificate without dropping connections, keeping the current one if the new
+  files don't load, and reloads the schema cache; `-check` validates the files and prints the
+  expiry, and a certificate expiring within 14 days is logged
+  ([TLS](https://mariuz.github.io/firebirdrest/references/deployment/#tls)).
+- `.deb` and `.rpm` packages for amd64 and arm64 with every release: the binary, a hardened
+  systemd service running as a `firebirdrest` user with a configuration check before start,
+  and `/etc/firebirdrest/firebirdrest.conf` kept on upgrade
+  ([packages](https://mariuz.github.io/firebirdrest/references/deployment/#debian-ubuntu-rhel-fedora-packages)).
 - OpenTelemetry traces over OTLP/HTTP: `otel-traces-endpoint` (or the standard `OTEL_EXPORTER_OTLP_*`
   variables) exports a span per request with children for the JWT check, the transaction and
   each SQL statement; W3C `traceparent` joins the caller's trace and decides sampling,
@@ -15,6 +24,11 @@ All notable changes to FirebirdREST are listed here. The project follows
 - A fuzz test of the URL grammar, run in CI: arbitrary query strings must produce SQL whose
   values are all parameters and whose identifiers all come from the schema, and must be refused
   with a 4xx error rather than a panic or a 500.
+
+### Changed
+- `SIGHUP` now reloads the schema cache (and the TLS certificate), like `SIGUSR1`; the documented
+  systemd unit uses it for `systemctl reload`. The HTTP server's own errors, such as failed TLS
+  handshakes, go to the structured log at debug level.
 
 ### Fixed
 - Many-to-many embedding found no relationship when the junction table's foreign keys were not

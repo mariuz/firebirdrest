@@ -48,6 +48,16 @@ func main() {
 		os.Exit(2)
 	}
 	if *checkOnly {
+		if cfg.TLSCert != "" {
+			certs, err := newCertStore(cfg.TLSCert, cfg.TLSKey)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "config error: server-tls-cert:", err)
+				os.Exit(2)
+			}
+			if c := certs.cert.Load(); c.Leaf != nil {
+				fmt.Printf("TLS certificate %q expires %s\n", c.Leaf.Subject.CommonName, c.Leaf.NotAfter.UTC().Format(time.RFC3339))
+			}
+		}
 		for _, w := range cfg.Warnings {
 			fmt.Fprintln(os.Stderr, "warning:", w)
 		}
@@ -89,8 +99,19 @@ func main() {
 	}
 	defer srv.Close()
 
-	// SIGUSR1 reloads the schema cache (not available on Windows).
-	reloadOnSignal(srv, log)
+	var certs *certStore
+	if cfg.TLSCert != "" {
+		if certs, err = newCertStore(cfg.TLSCert, cfg.TLSKey); err != nil {
+			log.Error("TLS", "err", err)
+			os.Exit(2)
+		}
+		log.Info("TLS certificate loaded", certs.describe()...)
+		certs.warnExpiry(log)
+	}
+
+	// SIGUSR1 reloads the schema cache, SIGHUP the TLS certificate and the
+	// schema cache (not available on Windows).
+	reloadOnSignal(srv, certs, log)
 
 	// POST_EVENT '<db-reload-event>' from the database also reloads it.
 	if cfg.DBReloadEvent != "" {
@@ -154,6 +175,12 @@ func main() {
 		IdleTimeout:    120 * time.Second,
 		MaxHeaderBytes: 64 << 10,
 	}
+	if certs != nil {
+		hs.TLSConfig = certs.tlsConfig()
+	}
+	// the server's own errors (mostly failed TLS handshakes from scanners and
+	// plain-HTTP clients) go to the structured log, at debug level
+	hs.ErrorLog = slog.NewLogLogger(log.Handler(), slog.LevelDebug)
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
@@ -165,8 +192,12 @@ func main() {
 			log.Warn("requests still running after 10s, closing anyway", "err", err)
 		}
 	}()
-	log.Info("listening", "addr", addr)
-	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	log.Info("listening", "addr", addr, "tls", certs != nil)
+	serve := hs.ListenAndServe
+	if certs != nil {
+		serve = func() error { return hs.ListenAndServeTLS("", "") } // the certificate comes from TLSConfig
+	}
+	if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server stopped", "err", err)
 		os.Exit(1)
 	}

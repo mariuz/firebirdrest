@@ -12,14 +12,19 @@
 The workflow runs the full test suite on Firebird 3, 4, 5 and 6, then:
 
 - tags the commit (when started from the Actions page);
-- builds the binaries for Linux, macOS, Windows and FreeBSD and publishes the GitHub release
-  with the CHANGELOG section as its notes (replacing any text of a release drafted on GitHub);
+- builds the binaries for Linux, macOS, Windows and FreeBSD, and `.deb` and `.rpm` packages for
+  Linux amd64 and arm64 (`packaging/` holds their systemd unit, configuration and scripts), and
+  publishes the GitHub release with the CHANGELOG section as its notes (replacing any text of a
+  release drafted on GitHub);
 - builds and pushes the multi-arch Docker image (`x.y.z`, `x.y`, and `latest` for non-pre-releases);
 - publishes the optional packages below, when they are set up.
 
 Don't create the release on GitHub's Releases page first: let the workflow create it.
 
 ## Optional publishing targets
+
+To try the packages before a release: `goreleaser release --snapshot --clean --skip=publish`
+writes them to `dist/`.
 
 Each target turns on when its settings exist (**Settings → Secrets and variables → Actions**), and
 is skipped otherwise.

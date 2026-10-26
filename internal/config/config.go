@@ -55,6 +55,8 @@ type Config struct {
 	JWTRoleClaim       string // dotted path, e.g. "role" or "app_metadata.role"
 	ServerHost         string
 	ServerPort         int
+	TLSCert            string // PEM certificate (chain) file; with TLSKey, serve HTTPS
+	TLSKey             string // PEM private key file
 	ServerTimeout      int    // seconds a request may take, including reading its body (0 = no limit)
 	ServerMaxBody      int    // largest request body, in MB
 	AdminHost          string // listen address of the admin server ("" = server-host)
@@ -104,6 +106,8 @@ var keys = map[string]string{
 	"db-reload-event":             "FBREST_DB_RELOAD_EVENT",
 	"db-events":                   "FBREST_DB_EVENTS",
 	"db-events-roles":             "FBREST_DB_EVENTS_ROLES",
+	"server-tls-cert":             "FBREST_SERVER_TLS_CERT",
+	"server-tls-key":              "FBREST_SERVER_TLS_KEY",
 	"otel-traces-endpoint":        "FBREST_OTEL_TRACES_ENDPOINT",
 	"otel-traces-sample-ratio":    "FBREST_OTEL_TRACES_SAMPLE_RATIO",
 	"otel-service-name":           "FBREST_OTEL_SERVICE_NAME",
@@ -278,6 +282,11 @@ func Load(path string) (*Config, error) {
 	}
 	if len(c.DBEventsRoles) > 0 && len(c.DBEvents) == 0 {
 		c.Warnings = append(c.Warnings, "db-events-roles is set but db-events is empty: no event is exposed")
+	}
+	c.TLSCert = strings.TrimSpace(get("FBREST_SERVER_TLS_CERT", ""))
+	c.TLSKey = strings.TrimSpace(get("FBREST_SERVER_TLS_KEY", ""))
+	if (c.TLSCert == "") != (c.TLSKey == "") {
+		return nil, fmt.Errorf("server-tls-cert and server-tls-key must be set together")
 	}
 	// traces: our settings first, then the standard OpenTelemetry variables
 	c.OTelEndpoint = strings.TrimSpace(get("FBREST_OTEL_TRACES_ENDPOINT", ""))

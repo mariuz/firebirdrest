@@ -24,6 +24,19 @@ Client code written against the documented API keeps working. If you use
 [firebirdrest-js](https://github.com/mariuz/firebirdrest-js), its suite skips features newer
 than the server, so a newer client works with an older server.
 
+## 0.4.0 → 0.5.0
+
+Two behaviour changes, both widening what was refused before:
+
+| Change | Who is affected | What to do |
+|---|---|---|
+| `Accept: application/vnd.pgrst.plan` on `POST`, `PATCH`, `PUT` and `DELETE` returns the plans instead of `405` (`FBRST132`). The request runs in a transaction that is always rolled back. | Only deployments with `db-plan-enabled = true`, which should not be production. Clients that relied on the `405` to keep plan requests read-only. | Nothing; nothing is written. Leave `db-plan-enabled` off where writes must not run at all. |
+| `Prefer: params=multiple-objects` on a selectable procedure accepts up to 1024 objects instead of 200. | Clients that split arrays at 200. | Nothing; larger arrays now work in one request. |
+
+New and off by default: realtime events (`db-events`, `db-events-roles`, `GET /events/<name>`).
+The `+json` plan format gains a `tree` field next to `plan`. Plain JSON reads use less memory;
+responses are byte-for-byte the same.
+
 ## 0.3.0 → 0.4.0
 
 Three behaviour changes, from the performance work and the schema support:

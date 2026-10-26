@@ -37,6 +37,12 @@ type Config struct {
 	// listening to these roles (empty: any authenticated role).
 	DBEvents      []string
 	DBEventsRoles []string
+	// OTelEndpoint is the OTLP/HTTP URL traces are posted to ("" disables
+	// tracing); OTelHeaders are sent with each export.
+	OTelEndpoint    string
+	OTelHeaders     string
+	OTelServiceName string
+	OTelSampleRatio float64
 	// DBReadTxFresh gives every read its own transaction instead of reusing
 	// a read-only one per connection (db-read-tx-reuse = false).
 	DBReadTxFresh      bool
@@ -98,6 +104,9 @@ var keys = map[string]string{
 	"db-reload-event":             "FBREST_DB_RELOAD_EVENT",
 	"db-events":                   "FBREST_DB_EVENTS",
 	"db-events-roles":             "FBREST_DB_EVENTS_ROLES",
+	"otel-traces-endpoint":        "FBREST_OTEL_TRACES_ENDPOINT",
+	"otel-traces-sample-ratio":    "FBREST_OTEL_TRACES_SAMPLE_RATIO",
+	"otel-service-name":           "FBREST_OTEL_SERVICE_NAME",
 	"db-read-tx-reuse":            "FBREST_DB_READ_TX_REUSE",
 	"jwt-secret":                  "FBREST_JWT_SECRET",
 	"jwt-secret-is-base64":        "FBREST_JWT_SECRET_IS_BASE64",
@@ -269,6 +278,38 @@ func Load(path string) (*Config, error) {
 	}
 	if len(c.DBEventsRoles) > 0 && len(c.DBEvents) == 0 {
 		c.Warnings = append(c.Warnings, "db-events-roles is set but db-events is empty: no event is exposed")
+	}
+	// traces: our settings first, then the standard OpenTelemetry variables
+	c.OTelEndpoint = strings.TrimSpace(get("FBREST_OTEL_TRACES_ENDPOINT", ""))
+	if c.OTelEndpoint == "" {
+		c.OTelEndpoint = strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"))
+	}
+	if c.OTelEndpoint == "" {
+		if base := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")); base != "" {
+			c.OTelEndpoint = strings.TrimRight(base, "/") + "/v1/traces"
+		}
+	}
+	if c.OTelEndpoint != "" && !strings.HasPrefix(c.OTelEndpoint, "http://") && !strings.HasPrefix(c.OTelEndpoint, "https://") {
+		return nil, fmt.Errorf("otel-traces-endpoint must be an http:// or https:// URL, got %q", c.OTelEndpoint)
+	}
+	c.OTelHeaders = os.Getenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS")
+	if c.OTelHeaders == "" {
+		c.OTelHeaders = os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")
+	}
+	c.OTelServiceName = get("FBREST_OTEL_SERVICE_NAME", "")
+	if c.OTelServiceName == "" {
+		c.OTelServiceName = os.Getenv("OTEL_SERVICE_NAME")
+	}
+	if c.OTelServiceName == "" {
+		c.OTelServiceName = "firebirdrest"
+	}
+	c.OTelSampleRatio = 1
+	if s := strings.TrimSpace(get("FBREST_OTEL_TRACES_SAMPLE_RATIO", "")); s != "" {
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil || f < 0 || f > 1 {
+			return nil, fmt.Errorf("otel-traces-sample-ratio must be a number from 0 to 1, got %q", s)
+		}
+		c.OTelSampleRatio = f
 	}
 	c.JWTSecretIsBase64 = getBool("FBREST_JWT_SECRET_IS_BASE64", false)
 	c.ServerTiming = getBool("FBREST_SERVER_TIMING_ENABLED", false)

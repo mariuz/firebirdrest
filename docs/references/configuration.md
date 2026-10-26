@@ -36,6 +36,9 @@ jwt-secret = "a long random string of at least 32 characters"
 | `db-prepared-statements-idle` | `FBREST_DB_PREPARED_STATEMENTS_IDLE` | `30` | seconds after which an unused cached statement is closed ([why](schema-cache.md#ddl-and-cached-statements)) |
 | `db-events` | `FBREST_DB_EVENTS` | none | Firebird events clients may listen for at `GET /events/<name>` ([realtime events](../api/events.md)) |
 | `db-events-roles` | `FBREST_DB_EVENTS_ROLES` | none | roles allowed to listen; empty means any authenticated role |
+| `otel-traces-endpoint` | `FBREST_OTEL_TRACES_ENDPOINT` | none | OTLP/HTTP URL traces are posted to, e.g. `http://collector:4318/v1/traces`; also read from `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` ([traces](observability.md#traces)) |
+| `otel-traces-sample-ratio` | `FBREST_OTEL_TRACES_SAMPLE_RATIO` | `1` | share of requests traced when no `traceparent` header decides |
+| `otel-service-name` | `FBREST_OTEL_SERVICE_NAME` | `firebirdrest` | `service.name` of the traces; also read from `OTEL_SERVICE_NAME` |
 | `db-read-tx-reuse` | `FBREST_DB_READ_TX_REUSE` | `true` | `GET`/`HEAD` requests share long-lived read-only transactions, one per connection, instead of starting and committing one each ([details](security.md#transactions)) |
 | `db-reload-event` | `FBREST_DB_RELOAD_EVENT` | `fbrest_reload` | `POST_EVENT` name that reloads the schema cache; empty disables it |
 

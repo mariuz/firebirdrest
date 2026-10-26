@@ -135,6 +135,57 @@ Server-Timing: jwt;dur=0.1, parse;dur=0.2, transaction;dur=3.4, response;dur=0.3
 Error responses have no `Server-Timing` header. The header shows how your API is built, so
 leave it off on public APIs unless you want clients to see it.
 
+## Traces
+
+With an OTLP endpoint configured, every request becomes an
+[OpenTelemetry](https://opentelemetry.io) trace, exported over OTLP/HTTP (JSON) to Jaeger, Grafana
+Tempo, Honeycomb, an OpenTelemetry Collector or anything else that accepts OTLP:
+
+```ini
+otel-traces-endpoint = "http://otel-collector:4318/v1/traces"
+otel-service-name = "bookstore-api"       # default: OTEL_SERVICE_NAME, else firebirdrest
+otel-traces-sample-ratio = 0.1            # share of requests traced when the caller doesn't decide
+```
+
+The standard variables work too: `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, or
+`OTEL_EXPORTER_OTLP_ENDPOINT` with `/v1/traces` appended, and `OTEL_EXPORTER_OTLP_HEADERS` (or
+`OTEL_EXPORTER_OTLP_TRACES_HEADERS`) for an API key: `x-honeycomb-team=...`.
+
+A request that carries a W3C `traceparent` header joins the caller's trace, and the caller's
+sampled flag decides whether it is recorded; other requests are sampled by
+`otel-traces-sample-ratio` (default 1, every request). A traced request looks like this in Jaeger:
+
+```text
+GET /books                 25.6 ms  server   (child of the caller's span)
+├─ jwt                      0.1 ms
+└─ transaction             12.6 ms
+   ├─ EXECUTE BLOCK         1.6 ms  client   the request context variables
+   ├─ SELECT BOOKS          2.6 ms  client
+   ├─ SELECT AUTHORS        4.7 ms  client   embedded authors(name)
+   └─ SELECT TAGS           3.3 ms  client   embedded tags(name), through the junction
+```
+
+| Span | Attributes |
+|---|---|
+| request (`GET /books`, `POST /rpc/place_order`...) | `http.request.method`, `http.route`, `url.path`, `http.response.status_code`, `firebirdrest.role`, `firebirdrest.schema` (several schemas), `error.type` (the `FBRST` code or SQLSTATE); status error for 5xx |
+| `jwt` | only when a token is sent |
+| `transaction` | `firebirdrest.read_only`, `firebirdrest.tx_reused`, `firebirdrest.tx_outcome` (`commit`, `rollback`, `reuse`) |
+| `SELECT BOOKS`, `INSERT TAGS`, `EXECUTE PROCEDURE`... | `db.system.name` = `firebirdsql`, `db.operation.name`, `db.collection.name`, `db.query.text` |
+
+A statement's span lasts from its execution until the next statement starts or the transaction
+ends, so it includes fetching its rows. Spans never carry values: `db.query.text` has
+placeholders, and the query string and bodies are not recorded. The request log line gains a
+`trace_id` field for traced requests.
+
+Spans are exported in batches every 5 seconds; up to 4096 wait in memory, and more are dropped
+(counted below) rather than slowing requests. On shutdown the queue is flushed.
+
+| Metric | Type | |
+|---|---|---|
+| `firebirdrest_trace_spans_exported_total` | counter | spans accepted by the endpoint |
+| `firebirdrest_trace_spans_dropped_total` | counter | spans dropped because the queue was full |
+| `firebirdrest_trace_export_errors_total` | counter | failed exports (also logged) |
+
 ## Logs
 
 Each request is logged at `info` level with method, path, status and duration, as text on

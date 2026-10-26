@@ -257,6 +257,14 @@ func (s *Server) writeMetrics(out io.Writer) {
 	}
 
 	// JWT
+	if t := s.tracer; t != nil {
+		head("firebirdrest_trace_spans_exported_total", "counter", "Spans exported to the OTLP endpoint.")
+		fmt.Fprintf(&b, "firebirdrest_trace_spans_exported_total %d\n", t.exported.Load())
+		head("firebirdrest_trace_spans_dropped_total", "counter", "Spans dropped because the export queue was full.")
+		fmt.Fprintf(&b, "firebirdrest_trace_spans_dropped_total %d\n", t.dropped.Load())
+		head("firebirdrest_trace_export_errors_total", "counter", "Failed exports to the OTLP endpoint.")
+		fmt.Fprintf(&b, "firebirdrest_trace_export_errors_total %d\n", t.failures.Load())
+	}
 	if s.events != nil {
 		head("firebirdrest_event_streams", "gauge", "Open /events streams.")
 		fmt.Fprintf(&b, "firebirdrest_event_streams %d\n", m.eventStreams.Load())

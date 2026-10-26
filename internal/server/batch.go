@@ -284,6 +284,7 @@ func insertBatch(ctx context.Context, rc *reqCtx, rel *schema.Relation, rows []r
 		b := &query.Builder{}
 		b.W("INSERT INTO ", rel.SQLName(), " (", quoteCols(group[0].cols), ") VALUES (", placeholders(len(group[0].cols)), ")")
 		rc.tx.note(b.String())
+		rc.tx.note(b.String())
 		err := rc.tx.conn.Raw(func(dc any) error {
 			bp, ok := dc.(batchPreparer)
 			if !ok {

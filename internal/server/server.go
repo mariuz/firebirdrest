@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -40,6 +41,7 @@ type Server struct {
 	basep *rolePool
 
 	events *eventHub // nil unless db-events is set
+	tracer *tracer   // nil unless otel-traces-endpoint is set
 }
 
 // rolePool is the connection pool of one Firebird role plus its statement cache.
@@ -74,6 +76,9 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 	if err := s.Reload(ctx); err != nil {
 		db.Close()
 		return nil, err
+	}
+	if cfg.OTelEndpoint != "" {
+		s.tracer = newTracer(cfg.OTelEndpoint, parseOTLPHeaders(cfg.OTelHeaders), cfg.OTelServiceName, cfg.OTelSampleRatio, log)
 	}
 	s.startEvents()
 	return s, nil
@@ -114,6 +119,7 @@ func (s *Server) Close() {
 	if s.events != nil {
 		s.events.close()
 	}
+	s.tracer.close()
 	s.jwt.close()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -237,6 +243,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// type or running anything a value may contain
 	rw.Header().Set("X-Content-Type-Options", "nosniff")
 	rw.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	sp := s.tracer.startRequest(r, start)
+	if sp != nil {
+		r = r.WithContext(context.WithValue(r.Context(), spanCtxKey{}, sp))
+	}
 	if s.cfg.ServerTimeout > 0 && !isEventStream(r) {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.cfg.ServerTimeout)*time.Second)
 		defer cancel()
@@ -249,8 +259,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(rw, &query.Error{Status: 500, Code: errCode, Message: "internal server error"})
 		}
 		s.m.request(r.Method, rw.status, time.Since(start), errCode)
-		s.log.Info("request", "method", r.Method, "path", r.URL.Path, "status", rw.status,
-			"took", time.Since(start).Round(time.Microsecond))
+		if sp != nil {
+			sp.set("http.response.status_code", int64(rw.status))
+			if errCode != "" {
+				sp.set("error.type", errCode)
+			}
+			if rw.status >= 500 {
+				sp.fail(errCode)
+			}
+			sp.finish(time.Now())
+			s.log.Info("request", "method", r.Method, "path", r.URL.Path, "status", rw.status,
+				"took", time.Since(start).Round(time.Microsecond), "trace_id", hex.EncodeToString(sp.trace[:]))
+		} else {
+			s.log.Info("request", "method", r.Method, "path", r.URL.Path, "status", rw.status,
+				"took", time.Since(start).Round(time.Microsecond))
+		}
 	}()
 	s.cors(rw, r)
 	if r.Method == http.MethodOptions {
@@ -319,6 +342,24 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
+	if sp := spanFrom(r.Context()); sp != nil {
+		route := "/" + parts[0]
+		switch {
+		case path == "":
+			route = "/"
+		case parts[0] == "rpc" && len(parts) == 2:
+			route = "/rpc/" + parts[1]
+		case parts[0] == "events":
+			route = "/events"
+		case len(parts) > 1:
+			route = "/" + path
+		}
+		sp.set("http.route", route)
+		sp.setName(r.Method + " " + route)
+		if len(cat.Schemas) > 1 {
+			sp.set("firebirdrest.schema", sc.Name)
+		}
+	}
 	if path == "" {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			return &query.Error{Status: 405, Code: "FBRST117", Message: "only GET is allowed on /"}
@@ -334,10 +375,20 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	jwtStart := time.Now()
+	var jsp *span
+	if r.Header.Get("Authorization") != "" {
+		jsp = spanFrom(r.Context()).child("jwt", 1, jwtStart)
+	}
 	err = s.authenticate(rc)
 	since(&rc.timing.jwt, jwtStart)
 	if err != nil {
+		jsp.fail(toAPIError(err).Code)
+		jsp.finish(time.Now())
 		return err
+	}
+	jsp.finish(time.Now())
+	if sp := spanFrom(r.Context()); sp != nil {
+		sp.set("firebirdrest.role", rc.role)
 	}
 	if parts[0] == "events" {
 		if len(parts) != 2 {
@@ -484,7 +535,14 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 			return err
 		}
 	}
-	rc.tx = &cachedTx{tx: tx, conn: conn, cache: p.cache}
+	tsp := spanFrom(ctx).child("transaction", 1, rc.timing.txStart)
+	tsp.set("firebirdrest.read_only", ro)
+	tsp.set("firebirdrest.tx_reused", reuse)
+	var stmts *stmtSpans
+	if tsp != nil {
+		stmts = &stmtSpans{parent: tsp}
+	}
+	rc.tx = &cachedTx{tx: tx, conn: conn, cache: p.cache, stmts: stmts}
 	// hold the response until COMMIT succeeds (plan mode discards it anyway)
 	out := rc.w
 	var held *txWriter
@@ -558,6 +616,22 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 		err = tx.Commit()
 	}
 	rc.timing.tx = time.Since(rc.timing.txStart)
+	if tsp != nil {
+		now := time.Now()
+		stmts.end(now)
+		outcome := "commit"
+		switch {
+		case reuse:
+			outcome = "reuse"
+		case err != nil || rc.prefer.tx == "rollback" || rc.plan != nil:
+			outcome = "rollback"
+		}
+		tsp.set("firebirdrest.tx_outcome", outcome)
+		if err != nil {
+			tsp.fail(toAPIError(err).Code)
+		}
+		tsp.finish(now)
+	}
 	if err != nil || held == nil {
 		return err
 	}

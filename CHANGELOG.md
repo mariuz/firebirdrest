@@ -6,6 +6,12 @@ All notable changes to FirebirdREST are listed here. The project follows
 ## [Unreleased]
 
 ### Added
+- OpenTelemetry traces over OTLP/HTTP: `otel-traces-endpoint` (or the standard `OTEL_EXPORTER_OTLP_*`
+  variables) exports a span per request with children for the JWT check, the transaction and
+  each SQL statement; W3C `traceparent` joins the caller's trace and decides sampling,
+  `otel-traces-sample-ratio` samples the rest. No new dependencies: the exporter is written for
+  FirebirdREST, like the metrics. Checked against Jaeger
+  ([traces](https://mariuz.github.io/firebirdrest/references/observability/#traces)).
 - A fuzz test of the URL grammar, run in CI: arbitrary query strings must produce SQL whose
   values are all parameters and whose identifiers all come from the schema, and must be refused
   with a 4xx error rather than a panic or a 500.

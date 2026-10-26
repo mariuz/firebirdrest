@@ -161,12 +161,15 @@ type cachedTx struct {
 	cache *stmtCache // nil disables caching
 	// record, when set, collects the SQL of every statement (for query plans)
 	record *[]string
+	// stmts times each statement for tracing (nil when the request isn't traced)
+	stmts *stmtSpans
 }
 
 func (t *cachedTx) note(query string) {
 	if t.record != nil {
 		*t.record = append(*t.record, query)
 	}
+	t.stmts.start(query)
 }
 
 // stmt returns a transaction-bound cached statement, or nil.

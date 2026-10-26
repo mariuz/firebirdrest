@@ -412,8 +412,13 @@ func resolveEmbed(s *schema.Schema, parent *ReadNode, item *SelectItem) (*ReadNo
 				continue
 			}
 			j := toParent.From
-			// the junction's keys are in its own schema's list
-			for _, toChild := range j.Keys() {
+			// the junction's keys are in its own schema's list (the
+			// parent's, for relations not loaded from a database)
+			jkeys := j.Keys()
+			if jkeys == nil {
+				jkeys = keys
+			}
+			for _, toChild := range jkeys {
 				if toChild.From != j || !named(toChild.To) || toChild == toParent {
 					continue
 				}

@@ -68,6 +68,24 @@ jobs:
           FBREST_TEST_DB_URI: authenticator:authenticator@localhost:3050/var/lib/firebird/data/test.fdb
         run: go test -race -count=1 ./...
 
+  fuzz:
+    # the URL grammar against the SQL it produces (internal/query/fuzz_test.go);
+    # a failing input is uploaded so it can be added to testdata/fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Fuzz the URL grammar
+        run: go test ./internal/query -run '^$' -fuzz FuzzReadSQL -fuzztime ${{ github.event_name == 'schedule' && '10m' || '60s' }}
+      - name: Failing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failure
+          path: internal/query/testdata/fuzz
+
   docker:
     runs-on: ubuntu-latest
     steps:

@@ -5,6 +5,15 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- A fuzz test of the URL grammar, run in CI: arbitrary query strings must produce SQL whose
+  values are all parameters and whose identifiers all come from the schema, and must be refused
+  with a 4xx error rather than a panic or a 500.
+
+### Fixed
+- Many-to-many embedding found no relationship when the junction table's foreign keys were not
+  linked to a loaded schema; only schemas built in memory (tests, tools) were affected.
+
 ## [0.5.0] - 2026-10-26
 
 ### Added

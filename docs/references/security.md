@@ -215,6 +215,13 @@ its own grants. See [realtime events](../api/events.md).
 
 ## Other safeguards
 
+The URL grammar is fuzzed in CI: `FuzzReadSQL` turns arbitrary query strings into the SQL of every
+statement a read would run and checks that values only ever reach Firebird as parameters (no
+string literal, comment or statement separator outside quoted identifiers), that every
+identifier comes from the schema, and that bad input is refused with a 4xx error, never a panic
+or a 500. It runs for a minute on every push and ten minutes in the weekly scheduled run.
+
+
 - `PATCH` and `DELETE` without filters are refused (`db-safe-updates`).
 - `GET` and `HEAD` run in read-only transactions.
 - `db-max-rows` caps the rows a single read can return.

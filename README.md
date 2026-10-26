@@ -53,13 +53,16 @@ and file downloads, and runs a compatibility suite against this repository's exa
 - **Binaries** for Linux, macOS, Windows and FreeBSD (amd64/arm64) are on the
   [releases page](https://github.com/mariuz/firebirdrest/releases). Each is a single static file
   with no dependencies.
+- **Packages** for Debian, Ubuntu, RHEL, Fedora and SUSE (`.deb`, `.rpm`, amd64/arm64), with a
+  systemd service and `/etc/firebirdrest/firebirdrest.conf`: on the same page
+  ([details](https://mariuz.github.io/firebirdrest/references/deployment/#debian-ubuntu-rhel-fedora-packages)).
 - **Docker**: `docker run -p 3000:3000 -e FBREST_DB_URI=... ghcr.io/mariuz/firebirdrest:latest`
   (images for linux/amd64 and linux/arm64).
 - **Go**: `go install github.com/mariuz/firebirdrest/cmd/firebirdrest@latest`
 
 ```sh
 # example: Linux x86-64 (pick your version and platform from the releases page)
-curl -L https://github.com/mariuz/firebirdrest/releases/download/v0.5.0/firebirdrest_0.5.0_linux_amd64.tar.gz | tar xz
+curl -L https://github.com/mariuz/firebirdrest/releases/download/v0.6.0/firebirdrest_0.6.0_linux_amd64.tar.gz | tar xz
 ./firebirdrest --version
 ```
 
@@ -499,7 +502,7 @@ tag after the tests pass). The release workflow publishes binaries and checksums
 GoReleaser and pushes the Docker image to GHCR:
 
 ```sh
-git tag -a v0.5.0 -m "v0.5.0" && git push origin v0.5.0
+git tag -a v0.6.0 -m "v0.6.0" && git push origin v0.6.0
 goreleaser release --snapshot --clean      # try the release build locally
 ```
 

@@ -5,7 +5,15 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-26
+
 ### Added
+- OpenTelemetry traces over OTLP/HTTP: `otel-traces-endpoint` (or the standard `OTEL_EXPORTER_OTLP_*`
+  variables) exports a span per request with children for the JWT check, the transaction and
+  each SQL statement; W3C `traceparent` joins the caller's trace and decides sampling,
+  `otel-traces-sample-ratio` samples the rest. No new dependencies: the exporter is written for
+  FirebirdREST, like the metrics. Checked against Jaeger
+  ([traces](https://mariuz.github.io/firebirdrest/references/observability/#traces)).
 - Built-in TLS: `server-tls-cert` and `server-tls-key` serve HTTPS (TLS 1.2+, HTTP/2). `SIGHUP`
   reloads the certificate without dropping connections, keeping the current one if the new
   files don't load, and reloads the schema cache; `-check` validates the files and prints the
@@ -15,12 +23,10 @@ All notable changes to FirebirdREST are listed here. The project follows
   systemd service running as a `firebirdrest` user with a configuration check before start,
   and `/etc/firebirdrest/firebirdrest.conf` kept on upgrade
   ([packages](https://mariuz.github.io/firebirdrest/references/deployment/#debian-ubuntu-rhel-fedora-packages)).
-- OpenTelemetry traces over OTLP/HTTP: `otel-traces-endpoint` (or the standard `OTEL_EXPORTER_OTLP_*`
-  variables) exports a span per request with children for the JWT check, the transaction and
-  each SQL statement; W3C `traceparent` joins the caller's trace and decides sampling,
-  `otel-traces-sample-ratio` samples the rest. No new dependencies: the exporter is written for
-  FirebirdREST, like the metrics. Checked against Jaeger
-  ([traces](https://mariuz.github.io/firebirdrest/references/observability/#traces)).
+- A tutorial, *Sign-in with Keycloak*: tokens from an identity provider checked with
+  `jwt-jwks-url` and `jwt-aud`, a role claim mapped from a user attribute, key rotation, and
+  the settings for Auth0 and Microsoft Entra ID. `examples/keycloak/` has the Compose file and
+  the realm setup script, tested against Keycloak 26.4.
 - A fuzz test of the URL grammar, run in CI: arbitrary query strings must produce SQL whose
   values are all parameters and whose identifiers all come from the schema, and must be refused
   with a 4xx error rather than a panic or a 500.
@@ -309,7 +315,8 @@ First release. Supports Firebird 3, 4 and 5.
 - `admin-pprof` serves Go profiling endpoints on the admin port.
 - Release workflow can be started from GitHub (Actions, then Release, then Run workflow).
 
-[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/mariuz/firebirdrest/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mariuz/firebirdrest/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mariuz/firebirdrest/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mariuz/firebirdrest/compare/v0.2.0...v0.3.0

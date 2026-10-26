@@ -1,0 +1,27 @@
+# FirebirdREST with Keycloak issuing the tokens (docs: Tutorials -> Keycloak).
+#
+#   docker compose -f docker-compose.yml -f examples/keycloak/compose.yml up --build
+#   docker compose -f docker-compose.yml -f examples/keycloak/compose.yml exec keycloak bash /setup/setup.sh
+#
+# Keycloak's admin console is at http://localhost:8180 (admin / admin).
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    volumes:
+      - ./examples/keycloak/setup.sh:/setup/setup.sh:ro
+    ports:
+      - "8180:8080"
+
+  firebirdrest:
+    depends_on:
+      - keycloak
+    environment:
+      # tokens are checked against Keycloak's published keys instead of a shared secret
+      FBREST_JWT_SECRET: ""
+      FBREST_JWT_JWKS_URL: http://keycloak:8080/realms/bookstore/protocol/openid-connect/certs
+      # only tokens issued for this API
+      FBREST_JWT_AUD: firebirdrest

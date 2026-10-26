@@ -24,6 +24,20 @@ Client code written against the documented API keeps working. If you use
 [firebirdrest-js](https://github.com/mariuz/firebirdrest-js), its suite skips features newer
 than the server, so a newer client works with an older server.
 
+## 0.5.0 → 0.6.0
+
+One behaviour change:
+
+| Change | Who is affected | What to do |
+|---|---|---|
+| `SIGHUP` reloads the schema cache (and the TLS certificate, when one is set) instead of stopping the process, Go's default. | Scripts or supervisors that stop FirebirdREST with `SIGHUP`. | Stop it with `SIGTERM` or `SIGINT`, which still shut down gracefully. |
+
+New and off by default: OpenTelemetry traces (`otel-traces-endpoint`) and built-in TLS
+(`server-tls-cert`, `server-tls-key`). Releases now include `.deb` and `.rpm` packages; moving a
+manual install to them means the binary goes to `/usr/bin` and the configuration to
+`/etc/firebirdrest/firebirdrest.conf`, run by a `firebirdrest` user instead of the
+`DynamicUser` of the documented unit ([packages](references/deployment.md#debian-ubuntu-rhel-fedora-packages)).
+
 ## 0.4.0 → 0.5.0
 
 Two behaviour changes, both widening what was refused before:

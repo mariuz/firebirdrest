@@ -125,3 +125,9 @@ curl localhost:3000/my_orders -H "Authorization: Bearer $TOKEN"     # only Ana's
 - [Security and roles](../references/security.md): the full list of context variables, RSA/ECDSA
   keys, audiences and the pre-request hook.
 - [Configuration](../references/configuration.md): `jwt-secret`, `jwt-aud`, `jwt-role-claim-key`.
+
+## Next
+
+In production an identity provider issues the tokens instead of a shared secret:
+[Sign-in with Keycloak](keycloak.md) sets that up with `jwt-jwks-url`, an audience and a role
+claim, and lists the settings for Auth0 and Microsoft Entra ID.

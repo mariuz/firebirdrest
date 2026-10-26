@@ -40,6 +40,7 @@ nav:
   - Tutorials:
       - Getting started: tutorials/getting-started.md
       - Authentication: tutorials/authentication.md
+      - Sign-in with Keycloak: tutorials/keycloak.md
   - API:
       - Reading tables: api/reading.md
       - Resource embedding: api/embedding.md

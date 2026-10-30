@@ -42,6 +42,7 @@ list below.
 | Embedding | one SQL statement with lateral joins | one batched query per embed level |
 | Roles | `SET ROLE` per transaction | a connection pool per role (Firebird sets the role at connect time) |
 | Metrics | `pgrst_*` metrics on the admin server | `firebirdrest_*` metrics with their own names, at `/metrics` on the admin port ([list](references/observability.md#metrics)) |
+| Generated client types | `supabase gen types` | `npx firebirdrest-js gen types` from the OpenAPI document's `x-firebirdrest` data ([firebirdrest-js](https://github.com/mariuz/firebirdrest-js#typed-queries)) |
 | Tracing | OpenTelemetry through a separate setup | `otel-traces-endpoint`: a span per request, transaction and SQL statement, joining the caller's `traceparent` |
 | JWT keys from a URL | not built in | `jwt-jwks-url` fetches a provider's JWKS and follows key rotation |
 | JWT cache size | `jwt-cache-max-entries` | the same; entries also expire after 5 minutes and when the JWKS changes |

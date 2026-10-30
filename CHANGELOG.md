@@ -5,6 +5,8 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-30
+
 ### Added
 - The OpenAPI document carries `x-firebirdrest` extensions for client generators: each table's
   or view's kind, primary key, foreign keys (with columns, referenced relation and columns,
@@ -324,7 +326,8 @@ First release. Supports Firebird 3, 4 and 5.
 - `admin-pprof` serves Go profiling endpoints on the admin port.
 - Release workflow can be started from GitHub (Actions, then Release, then Run workflow).
 
-[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/mariuz/firebirdrest/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mariuz/firebirdrest/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mariuz/firebirdrest/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mariuz/firebirdrest/compare/v0.3.0...v0.4.0

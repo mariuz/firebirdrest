@@ -28,10 +28,10 @@ hardened systemd service that runs as a `firebirdrest` system user, and a config
 
 ```sh
 # Debian, Ubuntu
-curl -LO https://github.com/mariuz/firebirdrest/releases/download/v0.6.0/firebirdrest_0.6.0_amd64.deb
-sudo apt install ./firebirdrest_0.6.0_amd64.deb
+curl -LO https://github.com/mariuz/firebirdrest/releases/download/v0.7.0/firebirdrest_0.7.0_amd64.deb
+sudo apt install ./firebirdrest_0.7.0_amd64.deb
 # RHEL, Rocky, Alma, Fedora, openSUSE
-sudo dnf install https://github.com/mariuz/firebirdrest/releases/download/v0.6.0/firebirdrest-0.6.0.x86_64.rpm
+sudo dnf install https://github.com/mariuz/firebirdrest/releases/download/v0.7.0/firebirdrest-0.7.0.x86_64.rpm
 
 sudoedit /etc/firebirdrest/firebirdrest.conf        # db-uri, jwt-secret, ...
 sudo systemctl enable --now firebirdrest

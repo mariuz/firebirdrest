@@ -24,6 +24,13 @@ Client code written against the documented API keeps working. If you use
 [firebirdrest-js](https://github.com/mariuz/firebirdrest-js), its suite skips features newer
 than the server, so a newer client works with an older server.
 
+## 0.6.0 → 0.7.0
+
+No behaviour changes. The OpenAPI document gains `x-firebirdrest` fields for client generators
+(tools that read the document ignore unknown `x-` fields), and routines without a description
+are summarised as `function` or `selectable procedure` instead of `function function`. Upgrade
+firebirdrest-js to 0.3.0 for `gen types`.
+
 ## 0.5.0 → 0.6.0
 
 One behaviour change:

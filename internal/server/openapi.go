@@ -69,7 +69,7 @@ func relationSchema(r *schema.Relation, sc *schema.Schema) m {
 				" procedure " + rt.Name + "); embed with select=" + rt.Name + "(...)"}
 		}
 	}
-	out := m{"type": "object", "properties": props}
+	out := m{"type": "object", "properties": props, "x-firebirdrest": relationExt(r, sc)}
 	if len(required) > 0 {
 		out["required"] = required
 	}
@@ -77,6 +77,69 @@ func relationSchema(r *schema.Relation, sc *schema.Schema) m {
 		out["description"] = r.Description
 	}
 	return out
+}
+
+// relationExt is the x-firebirdrest extension of a table or view: what a
+// client generator needs beyond the JSON schema, in API names. foreignKeys
+// lists the keys this relation holds, as PostgREST's Relationships do; the
+// reverse direction is read from the other relation's keys.
+func relationExt(r *schema.Relation, sc *schema.Schema) m {
+	kind := "table"
+	if r.IsView {
+		kind = "view"
+	}
+	apiNames := func(db []string) []string {
+		out := make([]string, len(db))
+		for i, n := range db {
+			out[i] = schema.APIName(n)
+		}
+		return out
+	}
+	unique := func(cols []string) bool {
+		same := func(a, b []string) bool {
+			if len(a) != len(b) {
+				return false
+			}
+			seen := map[string]bool{}
+			for _, x := range a {
+				seen[x] = true
+			}
+			for _, x := range b {
+				if !seen[x] {
+					return false
+				}
+			}
+			return true
+		}
+		if len(r.PrimaryKey) > 0 && same(cols, r.PrimaryKey) {
+			return true
+		}
+		for _, u := range r.Uniques {
+			if same(cols, u) {
+				return true
+			}
+		}
+		return false
+	}
+	fks := []any{}
+	for _, fk := range sc.ForeignKeys {
+		if fk.From != r {
+			continue
+		}
+		k := m{"name": fk.Name, "columns": apiNames(fk.FromCols), "referencedRelation": fk.To.Name,
+			"referencedColumns": apiNames(fk.ToCols), "isOneToOne": unique(fk.FromCols)}
+		if fk.To.Schema != r.Schema {
+			k["referencedSchema"] = schema.APIName(fk.To.Schema)
+		}
+		fks = append(fks, k)
+	}
+	computed := []string{}
+	for _, rt := range r.Computed {
+		if rt.Kind == schema.Function {
+			computed = append(computed, rt.Name)
+		}
+	}
+	return m{"kind": kind, "primaryKey": apiNames(r.PrimaryKey), "foreignKeys": fks, "computedFields": computed}
 }
 
 var commonParams = m{
@@ -282,20 +345,35 @@ func (s *Server) openAPI(w http.ResponseWriter, r *http.Request, sc *schema.Sche
 		}
 		desc := rt.Description
 		if desc == "" {
-			desc = rt.Kind + " " + map[bool]string{true: "function", false: "procedure"}[rt.Kind == schema.Function]
+			desc = "function"
+			if rt.Kind != schema.Function {
+				desc = rt.Kind + " procedure"
+			}
+		}
+		args := []any{}
+		for _, a := range rt.In {
+			args = append(args, m{"name": a.Name, "hasDefault": a.HasDefault})
 		}
 		responses := m{"200": m{"description": "OK", "content": m{"application/json": m{"schema": resp}}}}
 		paths["/rpc/"+name] = m{
+			"x-firebirdrest": m{"kind": rt.Kind, "args": args},
 			"get": m{"tags": []string{"(rpc) " + name}, "summary": desc, "parameters": qp, "responses": responses},
 			"post": m{"tags": []string{"(rpc) " + name}, "summary": desc,
 				"requestBody": m{"content": m{"application/json": m{"schema": m{"type": "object", "properties": props}}}},
 				"responses":   responses},
 		}
 	}
+	exposed := []string{}
+	if cat := s.catalog.Load(); cat != nil && sc.Name != "" {
+		exposed = cat.Names()
+	}
 	doc := m{
 		"openapi": "3.0.3",
 		"info": m{"title": "FirebirdREST API", "version": Version,
-			"description": "REST API generated from a Firebird " + sc.Version + " database by FirebirdREST"},
+			"description": "REST API generated from a Firebird " + sc.Version + " database by FirebirdREST",
+			// for client generators: the schema this document describes ("" before
+			// Firebird 6) and the exposed schemas, each read with Accept-Profile
+			"x-firebirdrest": m{"schema": sc.Name, "schemas": exposed, "firebird": sc.Version}},
 		"servers":    []any{m{"url": server}},
 		"paths":      paths,
 		"components": m{"schemas": schemas, "parameters": commonParams},

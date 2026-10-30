@@ -39,6 +39,7 @@ Each is marked as such in its documentation.
 | Firebird 6 support in general | Tested against the nightly snapshot in CI, with known driver issues listed under [Deployment](deployment.md#firebird-6). |
 | Query plan output (`Accept: application/vnd.pgrst.plan`) | The text is Firebird's explained plan, which differs between Firebird versions; the JSON shape `[{query, plan, tree}]` is stable, the plan text and the node texts of the tree are not. |
 | `Server-Timing` metric names | Follow PostgREST's; may gain entries. |
+| OpenAPI `x-firebirdrest` extensions | The documented fields keep their names and meaning; new fields may be added. Client generators rely on them. |
 
 ## Not covered
 

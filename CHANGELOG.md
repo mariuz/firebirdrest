@@ -5,6 +5,15 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- The OpenAPI document carries `x-firebirdrest` extensions for client generators: each table's
+  or view's kind, primary key, foreign keys (with columns, referenced relation and columns,
+  one-to-one, and schema when it crosses one) and computed fields; each routine's kind and which
+  arguments have defaults; and the exposed schemas. firebirdrest-js's `gen types` reads them.
+
+### Fixed
+- Routines without a description were summarised in the OpenAPI document as "function function".
+
 ## [0.6.0] - 2026-10-26
 
 ### Added

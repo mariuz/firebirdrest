@@ -121,6 +121,20 @@ curl localhost:3000/ > openapi.json
 Behind a proxy, set `openapi-server-proxy-uri` to the public URL so the document's `servers`
 entry is right.
 
+### Data for client generators
+
+Three `x-firebirdrest` extensions carry what the JSON schemas can't, for tools such as
+[`firebirdrest-js gen types`](https://github.com/mariuz/firebirdrest-js#typed-queries):
+
+| Where | Fields |
+|---|---|
+| `info` | `schema` (the one described, `""` before Firebird 6), `schemas` (all exposed, each read with `Accept-Profile`), `firebird` (server version) |
+| each table or view in `components.schemas` | `kind` (`table` or `view`), `primaryKey`, `foreignKeys` (`name`, `columns`, `referencedRelation`, `referencedColumns`, `isOneToOne`, and `referencedSchema` for a key into another schema), `computedFields` (functions usable as columns; `select=*` leaves them out) |
+| each `/rpc/...` path | `kind` (`function`, `selectable`, `executable`), `args` (`name`, `hasDefault`) |
+
+Names are API names, as in URLs. The extensions follow the caller's privileges like the rest of
+the document.
+
 ## Errors
 
 Errors are JSON objects in PostgREST's shape:

@@ -86,6 +86,7 @@ Only with `db-events` set ([realtime events](../api/events.md)).
 | `firebirdrest_event_streams` | gauge | open `/events` streams |
 | `firebirdrest_events_received_total{event}` | counter | notifications received from the database, by event |
 | `firebirdrest_events_delivered_total` | counter | notifications written to streams |
+| `firebirdrest_event_stream_resets_total` | counter | reset messages sent: streams that may have missed notifications |
 | `firebirdrest_event_subscription_errors_total` | counter | times the subscription to the database was lost and renewed |
 
 ### Process

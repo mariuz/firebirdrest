@@ -357,7 +357,7 @@ func (s *Server) openAPI(w http.ResponseWriter, r *http.Request, sc *schema.Sche
 		responses := m{"200": m{"description": "OK", "content": m{"application/json": m{"schema": resp}}}}
 		paths["/rpc/"+name] = m{
 			"x-firebirdrest": m{"kind": rt.Kind, "args": args},
-			"get": m{"tags": []string{"(rpc) " + name}, "summary": desc, "parameters": qp, "responses": responses},
+			"get":            m{"tags": []string{"(rpc) " + name}, "summary": desc, "parameters": qp, "responses": responses},
 			"post": m{"tags": []string{"(rpc) " + name}, "summary": desc,
 				"requestBody": m{"content": m{"application/json": m{"schema": m{"type": "object", "properties": props}}}},
 				"responses":   responses},

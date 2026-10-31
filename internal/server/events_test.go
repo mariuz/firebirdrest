@@ -2,12 +2,15 @@ package server
 
 import (
 	"bufio"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/nakagami/firebirdsql"
 
 	"github.com/mariuz/firebirdrest/internal/config"
 )
@@ -18,11 +21,14 @@ type sseStream struct {
 	lines chan string
 }
 
-func openStream(t *testing.T, url, auth string) (*sseStream, int) {
+func openStream(t *testing.T, url, auth string, headers ...string) (*sseStream, int) {
 	t.Helper()
 	req, _ := http.NewRequest("GET", url, nil)
 	if auth != "" {
 		req.Header.Set("Authorization", auth)
+	}
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
 	}
 	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
@@ -137,4 +143,132 @@ func metricsOf(s *Server) string {
 	var sb strings.Builder
 	s.writeMetrics(&sb)
 	return sb.String()
+}
+
+// TestEventReplayRules checks which Last-Event-IDs can be replayed, on a hub
+// fed by hand.
+func TestEventReplayRules(t *testing.T) {
+	old := eventReplay
+	eventReplay = 4
+	defer func() { eventReplay = old }()
+	h := &eventHub{s: &Server{m: newMetrics()}, epoch: "e1", subs: map[*eventSub]struct{}{}}
+	post := func(name string) {
+		h.broadcast(firebirdsql.Event{Name: name, Count: 1})
+	}
+	both := map[string]bool{"a": true, "b": true}
+	onlyA := map[string]bool{"a": true}
+	post("a") // 1
+	post("b") // 2
+	post("a") // 3
+	seqs := func(ns []notification) (out []uint64) {
+		for _, n := range ns {
+			out = append(out, n.seq)
+		}
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if r, reset := h.since("e1-1", both); reset != "" || fmt.Sprint(seqs(r)) != "[2 3]" {
+		t.Errorf("after 1: %v %q", seqs(r), reset)
+	}
+	if r, reset := h.since("e1-1", onlyA); reset != "" || fmt.Sprint(seqs(r)) != "[3]" {
+		t.Errorf("after 1, only a: %v %q", seqs(r), reset)
+	}
+	if r, reset := h.since("e1-3", both); reset != "" || len(r) != 0 {
+		t.Errorf("up to date: %v %q", seqs(r), reset)
+	}
+	for id, want := range map[string]string{
+		"e0-2": "restarted", "e1-9": "unknown", "garbage": "unknown", "e1-x": "unknown",
+	} {
+		if _, reset := h.since(id, both); !strings.Contains(reset, want) {
+			t.Errorf("%s: reset %q, want %q", id, reset, want)
+		}
+	}
+	h.mu.Unlock()
+	post("a")
+	post("a")
+	post("b") // 4, 5, 6: the buffer keeps 3..6
+	h.mu.Lock()
+	if r, reset := h.since("e1-2", both); reset != "" || fmt.Sprint(seqs(r)) != "[3 4 5 6]" {
+		t.Errorf("oldest kept: %v %q", seqs(r), reset)
+	}
+	if _, reset := h.since("e1-1", both); !strings.Contains(reset, "more notifications") {
+		t.Errorf("beyond the buffer: %q", reset)
+	}
+	h.mu.Unlock()
+	// a lost database connection empties the buffer: older ids reset, and
+	// open streams get a reset message
+	sub, _, _, _ := h.subscribe([]string{"a"}, "")
+	h.gap("lost")
+	if n := <-sub.ch; n.reset != "lost" {
+		t.Errorf("open stream after a gap: %+v", n)
+	}
+	h.mu.Lock()
+	if _, reset := h.since("e1-5", both); !strings.Contains(reset, "more notifications") {
+		t.Errorf("after a gap: %q", reset)
+	}
+}
+
+// TestEventResume reconnects a stream with Last-Event-ID against the
+// database: missed notifications are replayed, and an unknown id resets.
+func TestEventResume(t *testing.T) {
+	ts := testServerWith(t, func(c *config.Config) { c.DBEvents = []string{"order_placed", "stock_changed"} })
+	user := "Bearer " + token(t, jwt.MapClaims{"role": "web_user"})
+	notify := func(name string) {
+		t.Helper()
+		if r := do(t, ts, "POST", "/rpc/notify", `{"name":"`+name+`"}`, "Authorization", user); r.status != 204 {
+			t.Fatalf("notify: %d %s", r.status, r.body)
+		}
+	}
+	// wait until the hub listens, as TestEvents does
+	var st *sseStream
+	for i := 0; ; i++ {
+		st, _ = openStream(t, ts.URL+"/events/stock_changed,order_placed", user)
+		if strings.HasPrefix(st.waitFor(t, ""), "retry: 3000") {
+			break
+		}
+		st.close()
+		if i == 20 {
+			t.Fatal("the hub never started listening")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	notify("stock_changed")
+	first := strings.TrimPrefix(st.waitFor(t, "id: "), "id: ")
+	st.close()
+
+	// missed while disconnected: three posts (Firebird may merge them into
+	// fewer notifications, adding up their counts)
+	notify("order_placed")
+	notify("stock_changed")
+	notify("order_placed")
+	time.Sleep(500 * time.Millisecond)
+
+	st2, _ := openStream(t, ts.URL+"/events/order_placed", user, "Last-Event-ID", first)
+	defer st2.close()
+	got := 0
+	for got < 2 {
+		l := st2.waitFor(t, "data: ")
+		if !strings.Contains(l, `"order_placed"`) {
+			t.Fatalf("replayed a notification the stream didn't ask for: %s", l)
+		}
+		var n struct{ Count int }
+		json.Unmarshal([]byte(strings.TrimPrefix(l, "data: ")), &n)
+		got += n.Count
+	}
+	// and live notifications follow the replay
+	notify("order_placed")
+	if l := st2.waitFor(t, "data: "); !strings.Contains(l, "order_placed") {
+		t.Errorf("live after replay: %s", l)
+	}
+
+	// an id from another server process: reset first
+	st3, _ := openStream(t, ts.URL+"/events/order_placed", user, "Last-Event-ID", "zzz-1")
+	defer st3.close()
+	if l := st3.waitFor(t, "event: "); l != "event: reset" {
+		t.Errorf("unknown epoch: %s", l)
+	}
+	if l := st3.waitFor(t, "data: "); !strings.Contains(l, "restarted") {
+		t.Errorf("reset reason: %s", l)
+	}
 }

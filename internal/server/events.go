@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,23 +34,45 @@ const (
 	eventBuffer    = 64               // notifications a stream may have unread
 )
 
+// eventReplay is how many recent notifications the hub keeps for clients
+// that reconnect with Last-Event-ID (a variable for tests).
+var eventReplay = 1000
+
+// Every notification gets an id, "<epoch>-<seq>": epoch identifies this
+// server process (it changes on restart and differs between instances) and
+// seq counts the notifications it received. A client that reconnects with
+// the last id it saw gets the notifications it missed from the replay
+// buffer. When that can't be done (another epoch, an id older than the
+// buffer, or a gap while the database connection was lost) the stream
+// starts with "event: reset": the client must re-read what it shows,
+// because notifications may have been missed. Nothing is missed silently.
+
+// notification is one received event, or a reset for a live stream.
+type notification struct {
+	seq   uint64
+	ev    firebirdsql.Event
+	reset string // why the stream may have missed notifications
+}
+
 type eventHub struct {
 	s     *Server
 	names []string
+	epoch string
 
 	mu   sync.Mutex
 	subs map[*eventSub]struct{}
 	// listening is true while the attachment is subscribed; streams opened
 	// while it isn't are told so, and reconnect
 	listening bool
-	seq       atomic.Uint64
+	seq       uint64         // the last notification's number
+	recent    []notification // the last eventReplay notifications, oldest first
 	done      chan struct{}
 	stopped   chan struct{}
 }
 
 type eventSub struct {
 	names map[string]bool
-	ch    chan firebirdsql.Event
+	ch    chan notification
 	lost  atomic.Int64 // notifications dropped because ch was full
 }
 
@@ -58,7 +81,8 @@ func (s *Server) startEvents() {
 		return
 	}
 	h := &eventHub{s: s, names: s.cfg.DBEvents, subs: map[*eventSub]struct{}{},
-		done: make(chan struct{}), stopped: make(chan struct{})}
+		epoch: strconv.FormatInt(time.Now().UnixNano(), 36),
+		done:  make(chan struct{}), stopped: make(chan struct{})}
 	s.events = h
 	go h.run()
 }
@@ -67,6 +91,7 @@ func (s *Server) startEvents() {
 // connection to the database is lost.
 func (h *eventHub) run() {
 	defer close(h.stopped)
+	lostBefore := false
 	for {
 		ev, err := firebirdsql.NewFBEvent(h.s.cfg.DBURI)
 		var sub *firebirdsql.Subscription
@@ -88,6 +113,11 @@ func (h *eventHub) run() {
 		h.s.log.Info("listening for events", "events", strings.Join(h.names, ","))
 		closed := make(chan error, 1)
 		sub.NotifyClose(closed)
+		if lostBefore {
+			// events posted while nobody listened are gone: tell the open
+			// streams, and make older ids unreplayable
+			h.gap("the server lost its connection to the database; notifications may have been missed")
+		}
 		h.setListening(true)
 		select {
 		case <-h.done:
@@ -99,6 +129,7 @@ func (h *eventHub) run() {
 			ev.Close()
 			h.s.log.Warn("event subscription lost, resubscribing", "err", err)
 			h.s.m.eventErrors.Add(1)
+			lostBefore = true
 		}
 	}
 }
@@ -109,34 +140,94 @@ func (h *eventHub) setListening(on bool) {
 	h.mu.Unlock()
 }
 
-// broadcast hands a notification to every stream listening for its name.
+// broadcast numbers a notification, keeps it for replay and hands it to
+// every stream listening for its name.
 func (h *eventHub) broadcast(e firebirdsql.Event) {
 	h.s.m.eventReceived(e.Name)
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.seq++
+	n := notification{seq: h.seq, ev: e}
+	h.recent = append(h.recent, n)
+	if over := len(h.recent) - eventReplay; over > 0 {
+		h.recent = append(h.recent[:0:0], h.recent[over:]...)
+	}
 	for sub := range h.subs {
-		if !sub.names[e.Name] {
-			continue
-		}
-		select {
-		case sub.ch <- e:
-		default:
-			sub.lost.Add(1)
+		if sub.names[e.Name] {
+			sub.send(n)
 		}
 	}
 }
 
-func (h *eventHub) subscribe(names []string) (*eventSub, bool) {
-	sub := &eventSub{names: map[string]bool{}, ch: make(chan firebirdsql.Event, eventBuffer)}
+// gap empties the replay buffer and sends a reset to every open stream.
+func (h *eventHub) gap(reason string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.recent = nil
+	for sub := range h.subs {
+		sub.send(notification{reset: reason})
+	}
+}
+
+func (sub *eventSub) send(n notification) {
+	select {
+	case sub.ch <- n:
+	default:
+		sub.lost.Add(1)
+	}
+}
+
+// subscribe registers a stream. With the client's Last-Event-ID it also
+// returns the notifications to replay, or why they can't be (reset), taken
+// under the same lock as the registration so nothing falls in between.
+func (h *eventHub) subscribe(names []string, lastID string) (sub *eventSub, listening bool, replay []notification, reset string) {
+	sub = &eventSub{names: map[string]bool{}, ch: make(chan notification, eventBuffer)}
 	for _, n := range names {
 		sub.names[n] = true
 	}
 	h.mu.Lock()
 	h.subs[sub] = struct{}{}
-	listening := h.listening
+	listening = h.listening
+	if lastID != "" {
+		replay, reset = h.since(lastID, sub.names)
+	}
 	h.mu.Unlock()
 	h.s.m.eventStreams.Add(1)
-	return sub, listening
+	if reset != "" {
+		h.s.m.eventResets.Add(1)
+	}
+	return sub, listening, replay, reset
+}
+
+// since returns the kept notifications after lastID for names, or why
+// they can't be known. Called with h.mu held.
+func (h *eventHub) since(lastID string, names map[string]bool) ([]notification, string) {
+	epoch, seqText, ok := strings.Cut(lastID, "-")
+	last, err := strconv.ParseUint(seqText, 10, 64)
+	switch {
+	case !ok || err != nil:
+		return nil, "unknown Last-Event-ID"
+	case epoch != h.epoch:
+		return nil, "the server restarted, or this is another instance; notifications may have been missed"
+	case last > h.seq:
+		return nil, "unknown Last-Event-ID"
+	case last == h.seq:
+		return nil, ""
+	}
+	if len(h.recent) == 0 || h.recent[0].seq > last+1 {
+		return nil, "more notifications were posted than the server keeps for replay; some may have been missed"
+	}
+	var out []notification
+	for _, n := range h.recent {
+		if n.seq > last && names[n.ev.Name] {
+			out = append(out, n)
+		}
+	}
+	return out, ""
+}
+
+func (h *eventHub) id(n notification) string {
+	return h.epoch + "-" + strconv.FormatUint(n.seq, 10)
 }
 
 func (h *eventHub) unsubscribe(sub *eventSub) {
@@ -212,7 +303,7 @@ func (s *Server) streamEvents(rc *reqCtx, spec string) error {
 		}
 	}
 
-	sub, listening := s.events.subscribe(names)
+	sub, listening, replay, reset := s.events.subscribe(names, rc.r.Header.Get("Last-Event-ID"))
 	defer s.events.unsubscribe(sub)
 	w := rc.w
 	h := w.Header()
@@ -228,13 +319,30 @@ func (s *Server) streamEvents(rc *reqCtx, spec string) error {
 		}
 		return ctrl.Flush() == nil
 	}
+	resetMsg := func(reason string) string {
+		return "event: reset\ndata: {\"reason\":" + string(query.AppendJSON(nil, reason)) + "}\n\n"
+	}
+	eventMsg := func(n notification) string {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "id: %s\nevent: %s\ndata: {\"name\":%s,\"count\":%d}\n\n",
+			s.events.id(n), n.ev.Name, query.AppendJSON(nil, n.ev.Name), n.ev.Count)
+		return sb.String()
+	}
 	// the first bytes tell the client the stream is up; a hub that is not
 	// listening says so, and the client reconnects later
 	if !listening {
 		write("retry: " + fmt.Sprint(eventRetry.Milliseconds()) + "\nevent: error\ndata: {\"message\":\"not listening: the database is unreachable\"}\n\n")
 		return nil
 	}
-	if !write("retry: 3000\n: listening " + strings.Join(names, ",") + "\n\n") {
+	head := "retry: 3000\n: listening " + strings.Join(names, ",") + "\n\n"
+	if reset != "" {
+		head += resetMsg(reset)
+	}
+	for _, n := range replay {
+		head += eventMsg(n)
+	}
+	s.m.eventDelivered.Add(uint64(len(replay)))
+	if !write(head) {
 		return nil
 	}
 	ctx := rc.r.Context()
@@ -251,15 +359,21 @@ func (s *Server) streamEvents(rc *reqCtx, spec string) error {
 			if !write(": keepalive\n\n") {
 				return nil
 			}
-		case e := <-sub.ch:
-			s.m.eventDelivered.Add(1)
-			var sb strings.Builder
-			fmt.Fprintf(&sb, "id: %d\nevent: %s\ndata: {\"name\":%s,\"count\":%d}\n\n",
-				s.events.seq.Add(1), e.Name, query.AppendJSON(nil, e.Name), e.Count)
-			if lost := sub.lost.Swap(0); lost > 0 {
-				fmt.Fprintf(&sb, ": %d notifications dropped, the stream was not read fast enough\n\n", lost)
+		case n := <-sub.ch:
+			var msg string
+			if n.reset != "" {
+				s.m.eventResets.Add(1)
+				msg = resetMsg(n.reset)
+			} else {
+				s.m.eventDelivered.Add(1)
+				msg = eventMsg(n)
 			}
-			if !write(sb.String()) {
+			if lost := sub.lost.Swap(0); lost > 0 {
+				// the stream fell behind: what was dropped is gone for it
+				s.m.eventResets.Add(1)
+				msg += resetMsg(fmt.Sprintf("%d notifications were dropped because the stream was not read fast enough", lost))
+			}
+			if !write(msg) {
 				return nil
 			}
 		}

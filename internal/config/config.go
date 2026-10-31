@@ -280,6 +280,12 @@ func Load(path string) (*Config, error) {
 			c.DBEventsRoles = append(c.DBEventsRoles, role)
 		}
 	}
+	for _, name := range c.DBEvents {
+		// the stream's own message types
+		if strings.EqualFold(name, "error") || strings.EqualFold(name, "reset") {
+			return nil, fmt.Errorf("db-events: %q is reserved for the stream's own messages; post another name", name)
+		}
+	}
 	if len(c.DBEventsRoles) > 0 && len(c.DBEvents) == 0 {
 		c.Warnings = append(c.Warnings, "db-events-roles is set but db-events is empty: no event is exposed")
 	}

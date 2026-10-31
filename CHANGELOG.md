@@ -5,6 +5,19 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- Resumable event streams: notifications have ids (`<server>-<number>`), the last 1,000 are kept,
+  and a stream reopened with `Last-Event-ID` first gets the notifications it missed. When that
+  can't be known (a restart, another instance, a gap while the database connection was lost, an
+  id older than the buffer, or a stream that fell behind) the stream sends `event: reset` with
+  the reason, so a client never misses notifications silently. The events page documents a
+  change-log table for clients that must see every change across restarts
+  ([events](https://mariuz.github.io/firebirdrest/api/events/#reconnecting-without-missing-notifications)).
+
+### Changed
+- `error` and `reset` can't be listed in `db-events`: they are the event stream's own message
+  types.
+
 ## [0.7.0] - 2026-10-30
 
 ### Added

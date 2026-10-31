@@ -37,6 +37,7 @@ type metrics struct {
 	eventStreams   atomic.Int64  // open /events streams
 	eventDelivered atomic.Uint64 // notifications written to streams
 	eventErrors    atomic.Uint64 // times the subscription to the database was lost
+	eventResets    atomic.Uint64 // reset messages sent: a stream may have missed notifications
 	eventsMu       sync.Mutex
 	events         map[string]uint64 // notifications received from the database, by event
 }
@@ -281,6 +282,8 @@ func (s *Server) writeMetrics(out io.Writer) {
 		m.eventsMu.Unlock()
 		head("firebirdrest_events_delivered_total", "counter", "Event notifications written to streams.")
 		fmt.Fprintf(&b, "firebirdrest_events_delivered_total %d\n", m.eventDelivered.Load())
+		head("firebirdrest_event_stream_resets_total", "counter", "Reset messages sent to streams that may have missed notifications.")
+		fmt.Fprintf(&b, "firebirdrest_event_stream_resets_total %d\n", m.eventResets.Load())
 		head("firebirdrest_event_subscription_errors_total", "counter", "Times the event subscription to the database was lost and renewed.")
 		fmt.Fprintf(&b, "firebirdrest_event_subscription_errors_total %d\n", m.eventErrors.Load())
 	}

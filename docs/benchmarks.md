@@ -26,6 +26,41 @@ scenario. `-only <text>` runs the matching scenarios only. Scenarios marked "rol
     container's IP rather than a published port: Docker's userland port proxy cost about 30% of
     throughput in our runs.
 
+## Regression checks in CI
+
+The [Performance workflow](https://github.com/mariuz/firebirdrest/actions/workflows/bench.yml)
+benchmarks every change to the server against the latest release, on the same runner and the
+same seeded Firebird 5 database, and fails when a scenario got more than 15% slower. It runs on
+pushes to `main` and pull requests that touch the code, weekly, and on demand (with another
+release or threshold). The report is the run's summary page:
+
+```text
+| Scenario | v0.7.0 req/s | 1a2b3c4 req/s | change | range of rounds |   |
+| row by primary key | 2212 | 1854 | -17.9% | -19% to -9% | **slower** |
+| insert 1 row (rollback) | 827 | 881 | +3.4% | +0% to +11% |  |
+```
+
+A shared CI runner's speed drifts from minute to minute, so a single measurement of each
+version can't be trusted. `bench compare` measures both servers in alternation, scenario by
+scenario, for five rounds, swapping which goes first each round; each round gives a ratio taken
+seconds apart, and a scenario's verdict is the median of its five ratios. A slow round, or a
+slowdown that hits both servers, doesn't fail it.
+
+Checked before relying on it, on a 4-CPU machine:
+
+- **The same build on both sides** (an A/A test): single rounds differed by up to 16%, the
+  medians by at most 7.3%. No scenario failed.
+- **A build with 1 ms added to every read**: reading a row by key came out 17.9% slower and
+  failed the run; inserts, and reads where 1 ms is a smaller share of the time, passed.
+
+So the check catches a change that costs a fast request about a millisecond, and ignores the
+runner's noise. Run it locally against any two servers on one database:
+
+```sh
+go run ./bench compare -baseline http://localhost:3001 -candidate http://localhost:3000 \
+  -secret "$JWT_SECRET" -rounds 5 -d 3s
+```
+
 ## Results
 
 The current code compared with the code before the performance work (commit `712a7fb`), on a

@@ -3,6 +3,7 @@
 //
 //	go run ./bench seed -dsn SYSDBA:masterkey@localhost:3050/var/lib/firebird/data/bench.fdb
 //	go run ./bench run  -url http://localhost:3000 -c 16 -d 10s
+//	go run ./bench compare -baseline http://localhost:3001 -candidate http://localhost:3000
 //
 // The database must already contain the schema from examples/bookstore.sql.
 package main
@@ -28,7 +29,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: bench seed|run [flags]")
+		fmt.Fprintln(os.Stderr, "usage: bench seed|run|compare [flags]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -36,8 +37,10 @@ func main() {
 		seed(os.Args[2:])
 	case "run":
 		run(os.Args[2:])
+	case "compare":
+		compare(os.Args[2:])
 	default:
-		fmt.Fprintln(os.Stderr, "usage: bench seed|run [flags]")
+		fmt.Fprintln(os.Stderr, "usage: bench seed|run|compare [flags]")
 		os.Exit(2)
 	}
 }

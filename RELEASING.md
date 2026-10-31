@@ -21,6 +21,10 @@ The workflow runs the full test suite on Firebird 3, 4, 5 and 6, then:
 
 Don't create the release on GitHub's Releases page first: let the workflow create it.
 
+Before releasing, the latest run of the **Performance** workflow on `main` should be green: it
+compares `main` with the previous release and fails on a slowdown over 15%
+([how](https://mariuz.github.io/firebirdrest/benchmarks/#regression-checks-in-ci)).
+
 ## Optional publishing targets
 
 To try the packages before a release: `goreleaser release --snapshot --clean --skip=publish`

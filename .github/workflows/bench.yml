@@ -1,0 +1,101 @@
+name: Performance
+
+# Benchmarks the change against the latest release on the same runner and
+# database, and fails when a scenario is more than 15% slower (see
+# `bench compare` in bench/compare.go for how noise is kept out). The report
+# is the run's summary; the measurements are an artifact.
+on:
+  push:
+    branches: [main]
+    paths: ["internal/**", "cmd/**", "go.mod", "go.sum", "bench/**", ".github/workflows/bench.yml"]
+  pull_request:
+    paths: ["internal/**", "cmd/**", "go.mod", "go.sum", "bench/**", ".github/workflows/bench.yml"]
+  schedule:
+    - cron: "41 3 * * 2" # weekly, against whatever the runners are now
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: "Release tag to compare against (empty: the latest release)"
+        required: false
+      threshold:
+        description: "Largest slowdown tolerated, as a fraction"
+        required: false
+        default: "0.15"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      firebird:
+        image: firebirdsql/firebird:5
+        env:
+          FIREBIRD_ROOT_PASSWORD: masterkey
+          FIREBIRD_DATABASE: bench.fdb
+        ports:
+          - 3050:3050
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Seed the benchmark database
+        run: |
+          for i in $(seq 1 30); do
+            docker exec ${{ job.services.firebird.id }} test -f /var/lib/firebird/data/bench.fdb && break
+            sleep 2
+          done
+          sleep 3
+          docker cp examples/bookstore.sql ${{ job.services.firebird.id }}:/tmp/bookstore.sql
+          docker exec ${{ job.services.firebird.id }} /opt/firebird/bin/isql \
+            -user SYSDBA -password masterkey localhost:/var/lib/firebird/data/bench.fdb -i /tmp/bookstore.sql
+          go run ./bench seed -dsn SYSDBA:masterkey@localhost:3050/var/lib/firebird/data/bench.fdb
+      - name: Baseline (a release) and candidate (this commit)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ inputs.baseline }}"
+          [ -n "$tag" ] || tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          echo "BASELINE=$tag" >> "$GITHUB_ENV"
+          mkdir -p baseline
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern '*_linux_amd64.tar.gz' --output - | tar xz -C baseline firebirdrest
+          baseline/firebirdrest -version
+          go build -o candidate ./cmd/firebirdrest
+          ./candidate -version
+      - name: Start both servers
+        run: |
+          start() {
+            FBREST_DB_URI=authenticator:authenticator@localhost:3050/var/lib/firebird/data/bench.fdb \
+            FBREST_DB_ANON_ROLE=web_anon FBREST_JWT_SECRET=reallyreallyreallyreallyverysafe1234 \
+            FBREST_DB_POOL=16 FBREST_LOG_LEVEL=warn FBREST_SERVER_PORT=$2 \
+              nohup "$1" > "$3.log" 2>&1 &
+          }
+          start baseline/firebirdrest 3001 baseline
+          start ./candidate 3002 candidate
+          for p in 3001 3002; do
+            for i in $(seq 1 30); do curl -sf -o /dev/null "localhost:$p/books?limit=1" && break; sleep 1; done
+          done
+      - name: Compare
+        run: |
+          go run ./bench compare \
+            -baseline http://localhost:3001 -baseline-name "$BASELINE" \
+            -candidate http://localhost:3002 -candidate-name "${GITHUB_SHA::7}" \
+            -threshold "${{ inputs.threshold || '0.15' }}" \
+            -rounds 5 -d 3s -warmup 1s -c 8 \
+            -secret reallyreallyreallyreallyverysafe1234 \
+            -summary "$GITHUB_STEP_SUMMARY" -json bench.json
+      - name: Measurements and server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench
+          path: |
+            bench.json
+            *.log

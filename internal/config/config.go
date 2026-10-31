@@ -4,6 +4,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -59,7 +60,8 @@ type Config struct {
 	TLSKey             string // PEM private key file
 	ServerTimeout      int    // seconds a request may take, including reading its body (0 = no limit)
 	ServerMaxBody      int    // largest request body, in MB
-	AdminHost          string // listen address of the admin server ("" = server-host)
+	AdminHost          string // listen address of the admin server (default 127.0.0.1)
+	AdminToken         string // bearer token for /reload, /metrics and /debug/pprof/ ("" = none)
 	AdminPort          int    // 0 = disabled; serves /live and /ready
 	AdminPprof         bool   // also serve Go profiling endpoints at /debug/pprof/ on the admin port
 	ServerTiming       bool   // add a Server-Timing header to responses
@@ -124,6 +126,7 @@ var keys = map[string]string{
 	"server-request-timeout":      "FBREST_SERVER_REQUEST_TIMEOUT",
 	"server-max-body-size":        "FBREST_SERVER_MAX_BODY_SIZE",
 	"admin-server-host":           "FBREST_ADMIN_SERVER_HOST",
+	"admin-server-token":          "FBREST_ADMIN_SERVER_TOKEN",
 	"server-timing-enabled":       "FBREST_SERVER_TIMING_ENABLED",
 	"admin-server-port":           "FBREST_ADMIN_SERVER_PORT",
 	"admin-pprof":                 "FBREST_ADMIN_PPROF",
@@ -214,7 +217,7 @@ func Load(path string) (*Config, error) {
 		JWTJWKSURL:      get("FBREST_JWT_JWKS_URL", ""),
 		JWTRoleClaim:    get("FBREST_JWT_ROLE_CLAIM_KEY", "role"),
 		ServerHost:      get("FBREST_SERVER_HOST", "0.0.0.0"),
-		AdminHost:       get("FBREST_ADMIN_SERVER_HOST", ""),
+		AdminHost:       get("FBREST_ADMIN_SERVER_HOST", "127.0.0.1"),
 		CORSOrigins:     get("FBREST_SERVER_CORS_ALLOWED_ORIGINS", "*"),
 		OpenAPIProxyURI: get("FBREST_OPENAPI_SERVER_PROXY_URI", ""),
 		LogLevel:        get("FBREST_LOG_LEVEL", "info"),
@@ -286,6 +289,23 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("db-events: %q is reserved for the stream's own messages; post another name", name)
 		}
 	}
+	if c.AdminHost == "" {
+		c.AdminHost = "127.0.0.1"
+	}
+	c.AdminToken = strings.TrimSpace(get("FBREST_ADMIN_SERVER_TOKEN", ""))
+	if strings.HasPrefix(c.AdminToken, "@") {
+		b, err := os.ReadFile(c.AdminToken[1:])
+		if err != nil {
+			return nil, fmt.Errorf("admin-server-token: %w", err)
+		}
+		c.AdminToken = strings.TrimSpace(string(b))
+	}
+	if c.AdminToken != "" && len(c.AdminToken) < 16 {
+		return nil, fmt.Errorf("admin-server-token must be at least 16 characters")
+	}
+	if c.AdminPort > 0 && c.AdminToken == "" && !loopbackHost(c.AdminHost) {
+		c.Warnings = append(c.Warnings, fmt.Sprintf("the admin server listens on %s without admin-server-token: anyone who can reach port %d can reload the schema cache and read the metrics", c.AdminHost, c.AdminPort))
+	}
 	if len(c.DBEventsRoles) > 0 && len(c.DBEvents) == 0 {
 		c.Warnings = append(c.Warnings, "db-events-roles is set but db-events is empty: no event is exposed")
 	}
@@ -355,7 +375,9 @@ func Load(path string) (*Config, error) {
 	if c.CORSOrigins == "*" {
 		warnings = append(warnings, "server-cors-allowed-origins is \"*\": any website may call the API from a browser (without credentials)")
 	}
-	c.Warnings = warnings
+	// warnings collected while reading the file come first, then those
+	// added while checking the settings
+	c.Warnings = append(warnings, c.Warnings...)
 	return c, nil
 }
 
@@ -365,4 +387,13 @@ func isTrue(s string) bool {
 		return false
 	}
 	return true
+}
+
+// loopbackHost reports whether a listen address only accepts local connections.
+func loopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }

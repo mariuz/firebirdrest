@@ -18,5 +18,10 @@ LABEL org.opencontainers.image.source="https://github.com/mariuz/firebirdrest" \
       org.opencontainers.image.licenses="MIT"
 COPY --from=build /out/firebirdrest /usr/local/bin/firebirdrest
 EXPOSE 3000
+# In a container the admin port (when enabled) must listen on every interface
+# for health checks and metrics to reach it; it is still only reachable where
+# the port is published. Set FBREST_ADMIN_SERVER_TOKEN to protect /reload,
+# /metrics and profiling.
+ENV FBREST_ADMIN_SERVER_HOST=0.0.0.0
 USER nonroot
 ENTRYPOINT ["/usr/local/bin/firebirdrest"]

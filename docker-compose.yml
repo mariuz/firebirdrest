@@ -27,6 +27,8 @@ services:
       # change this! at least 32 characters
       FBREST_JWT_SECRET: reallyreallyreallyreallyverysafe1234
       FBREST_ADMIN_SERVER_PORT: "3001"
+      # /reload and /metrics need "Authorization: Bearer <token>"; /live and /ready don't
+      FBREST_ADMIN_SERVER_TOKEN: change-this-admin-token
     ports:
       - "3000:3000"
       - "3001:3001"

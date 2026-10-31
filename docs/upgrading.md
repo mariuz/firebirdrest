@@ -24,6 +24,18 @@ Client code written against the documented API keeps working. If you use
 [firebirdrest-js](https://github.com/mariuz/firebirdrest-js), its suite skips features newer
 than the server, so a newer client works with an older server.
 
+## 0.7.0 → 0.8.0
+
+Two behaviour changes:
+
+| Change | Who is affected | What to do |
+|---|---|---|
+| The admin server listens on `127.0.0.1` when `admin-server-host` isn't set, instead of on `server-host` (by default every interface). The Docker image sets `0.0.0.0`, so containers are unaffected. | Binary or package installs whose health checks or Prometheus reach the admin port from another machine. | Set `admin-server-host` to the address to listen on, and `admin-server-token` to protect `/reload` and `/metrics` (the scraper then sends the token). |
+| `error` and `reset` are refused as names in `db-events`. | Databases posting events with those names. | Post another name. |
+
+New: `admin-server-token`, and resumable event streams (`Last-Event-ID` and `event: reset`;
+upgrade firebirdrest-js to 0.4.0 to use them).
+
 ## 0.6.0 → 0.7.0
 
 No behaviour changes. The OpenAPI document gains `x-firebirdrest` fields for client generators

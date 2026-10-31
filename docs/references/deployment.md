@@ -11,6 +11,7 @@ docker run -d --name firebirdrest -p 3000:3000 -p 3001:3001 \
   -e FBREST_DB_ANON_ROLE=web_anon \
   -e FBREST_JWT_SECRET="$(cat /run/secrets/jwt_secret)" \
   -e FBREST_ADMIN_SERVER_PORT=3001 \
+  -e FBREST_ADMIN_SERVER_TOKEN="$(cat /run/secrets/admin_token)" \
   ghcr.io/mariuz/firebirdrest:latest
 ```
 
@@ -128,8 +129,13 @@ With `admin-server-port` set:
 |---|---|
 | `GET /live` | `200` while the process runs |
 | `GET /ready` | `200` when the database answers, `503` otherwise |
-| `POST /reload` | reload the schema cache (`204`) |
-| `GET /metrics` | metrics in the Prometheus format ([list](observability.md#metrics)) |
+| `POST /reload` | reload the schema cache (`204`); needs the token when `admin-server-token` is set |
+| `GET /metrics` | metrics in the Prometheus format ([list](observability.md#metrics)); needs the token when set |
+
+`/live` and `/ready` never need the token, so probes work without credentials. The admin server
+listens on `127.0.0.1` outside containers and on every interface in the Docker image; publish its
+port only where it is needed, and set `admin-server-token` when anything beyond the machine can
+reach it.
 
 ```yaml
 # Kubernetes

@@ -14,9 +14,20 @@ All notable changes to FirebirdREST are listed here. The project follows
   change-log table for clients that must see every change across restarts
   ([events](https://mariuz.github.io/firebirdrest/api/events/#reconnecting-without-missing-notifications)).
 
+- `admin-server-token`: when set, the admin server's `/reload`, `/metrics` and `/debug/pprof/`
+  need `Authorization: Bearer <token>`; `/live` and `/ready` stay open for probes. A warning at
+  startup and in `-check` says when the admin server is reachable beyond the machine without one.
+
 ### Changed
+- The admin server listens on `127.0.0.1` unless `admin-server-host` says otherwise; it used to
+  follow `server-host`, which listens on every interface. The Docker image sets `0.0.0.0`, where
+  the published ports decide who can reach it.
 - `error` and `reset` can't be listed in `db-events`: they are the event stream's own message
   types.
+
+### Fixed
+- Configuration warnings found after the config file was read, such as `db-events-roles` without
+  `db-events`, were dropped instead of being logged and shown by `-check`.
 
 ## [0.7.0] - 2026-10-30
 

@@ -9,7 +9,7 @@ With `admin-server-port` set, `GET /metrics` on the admin port returns metrics i
 [Prometheus text format](https://prometheus.io/docs/instrumenting/exposition_formats/):
 
 ```sh
-curl -s localhost:3001/metrics | grep requests_total
+curl -s localhost:3001/metrics -H "Authorization: Bearer $ADMIN_TOKEN" | grep requests_total
 # firebirdrest_requests_total{method="GET",status="200"} 1832
 # firebirdrest_requests_total{method="POST",status="201"} 41
 ```
@@ -19,9 +19,14 @@ A Prometheus scrape job:
 ```yaml
 scrape_configs:
   - job_name: firebirdrest
+    authorization:
+      credentials_file: /etc/prometheus/firebirdrest-admin-token   # admin-server-token
     static_configs:
       - targets: ["firebirdrest:3001"]
 ```
+
+Without `admin-server-token` the `authorization` block isn't needed, but then the admin port must
+not be reachable by anyone else ([configuration](configuration.md)).
 
 In Kubernetes, scrape the admin port of each pod; don't route it through the public service.
 

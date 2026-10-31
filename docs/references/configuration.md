@@ -88,13 +88,17 @@ Don't add `role=` yourself: FirebirdREST sets the role per request.
 | `openapi-mode` | `FBREST_OPENAPI_MODE` | `follow-privileges` | what `GET /` describes: only what the caller's role is granted (`follow-privileges`), everything (`ignore-privileges`), or nothing (`disabled`, `404`) |
 | `server-timing-enabled` | `FBREST_SERVER_TIMING_ENABLED` | `false` | add a `Server-Timing` header to responses ([details](observability.md#server-timing)) |
 | `admin-server-port` | `FBREST_ADMIN_SERVER_PORT` | `0` (off) | admin server: `GET /live`, `GET /ready`, `POST /reload`, `GET /metrics` |
-| `admin-server-host` | `FBREST_ADMIN_SERVER_HOST` | `server-host` | listen address of the admin server, e.g. `127.0.0.1` |
+| `admin-server-host` | `FBREST_ADMIN_SERVER_HOST` | `127.0.0.1` (`0.0.0.0` in the Docker image) | listen address of the admin server |
+| `admin-server-token` | `FBREST_ADMIN_SERVER_TOKEN` | none | bearer token required by `/reload`, `/metrics` and `/debug/pprof/`; at least 16 characters, or `@/path/to/file` |
 | `admin-pprof` | `FBREST_ADMIN_PPROF` | `false` | serve Go profiling at `/debug/pprof/` on the admin port |
 | `log-level` | `FBREST_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; `info` logs every request |
 
-The admin server has no authentication. Don't expose it publicly: anyone who can reach it can
-reload the schema cache, read the metrics, and with `admin-pprof` read profiling data. Bind it to
-a private interface with `admin-server-host`, or keep it off the public port mapping.
+The admin server listens on `127.0.0.1` by default, so only the same machine reaches it. To reach
+it from elsewhere (a Prometheus server, a load balancer's health check, Kubernetes probes), set
+`admin-server-host` and an `admin-server-token`: `/reload`, `/metrics` and `/debug/pprof/` then
+need `Authorization: Bearer <token>`, while `/live` and `/ready` stay open for probes. Without a
+token on a non-local address, anyone who can reach the port can reload the schema cache and read
+the metrics; FirebirdREST warns about it at startup and in `-check`.
 
 Boolean settings left empty in the config file (`admin-pprof =`) keep their default.
 

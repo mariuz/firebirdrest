@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/pprof"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -119,43 +118,10 @@ func main() {
 	}
 
 	if cfg.AdminPort > 0 {
-		admin := http.NewServeMux()
-		admin.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-		admin.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-			c, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-			defer cancel()
-			if err := srv.Ready(c); err != nil {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-		})
-		admin.HandleFunc("/reload", func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-			if err := srv.Reload(r.Context()); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		})
-		admin.Handle("/metrics", srv.Metrics())
-		if cfg.AdminPprof {
-			admin.HandleFunc("/debug/pprof/", pprof.Index)
-			admin.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-			admin.HandleFunc("/debug/pprof/profile", pprof.Profile)
-			admin.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-			admin.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		}
+		admin := adminHandler(srv, cfg.AdminToken, cfg.AdminPprof)
 		go func() {
-			host := cfg.AdminHost
-			if host == "" {
-				host = cfg.ServerHost
-			}
-			addr := net.JoinHostPort(host, strconv.Itoa(cfg.AdminPort))
-			log.Info("admin server listening", "addr", addr)
+			addr := net.JoinHostPort(cfg.AdminHost, strconv.Itoa(cfg.AdminPort))
+			log.Info("admin server listening", "addr", addr, "token", cfg.AdminToken != "")
 			as := &http.Server{Addr: addr, Handler: admin, ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10}
 			if err := as.ListenAndServe(); err != nil {

@@ -5,6 +5,8 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-01
+
 ### Added
 - Resumable event streams: notifications have ids (`<server>-<number>`), the last 1,000 are kept,
   and a stream reopened with `Last-Event-ID` first gets the notifications it missed. When that
@@ -350,7 +352,8 @@ First release. Supports Firebird 3, 4 and 5.
 - `admin-pprof` serves Go profiling endpoints on the admin port.
 - Release workflow can be started from GitHub (Actions, then Release, then Run workflow).
 
-[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/mariuz/firebirdrest/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mariuz/firebirdrest/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mariuz/firebirdrest/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mariuz/firebirdrest/compare/v0.4.0...v0.5.0

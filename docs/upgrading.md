@@ -24,6 +24,12 @@ Client code written against the documented API keeps working. If you use
 [firebirdrest-js](https://github.com/mariuz/firebirdrest-js), its suite skips features newer
 than the server, so a newer client works with an older server.
 
+## 0.8.0 → 0.8.1
+
+No behaviour changes. Reads with a to-many embed use less memory; embedded rows without an
+`order` may come in a different order than before (their order was never defined), so give
+`<embed>.order` where the order matters.
+
 ## 0.7.0 → 0.8.0
 
 Two behaviour changes:

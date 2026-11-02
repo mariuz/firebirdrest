@@ -1,0 +1,1961 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Serve a RESTful API from any Firebird database">
+      
+      
+      
+        <link rel="canonical" href="https://mariuz.github.io/firebirdrest/references/security/">
+      
+      
+        <link rel="prev" href="../../api/events/">
+      
+      
+        <link rel="next" href="../configuration/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Security and roles - FirebirdREST</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#security-and-roles" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="FirebirdREST" class="md-header__button md-logo" aria-label="FirebirdREST" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            FirebirdREST
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Security and roles
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="amber"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="amber"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mariuz/firebirdrest" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mariuz/firebirdrest
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="FirebirdREST" class="md-nav__button md-logo" aria-label="FirebirdREST" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    FirebirdREST
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mariuz/firebirdrest" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mariuz/firebirdrest
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/keycloak/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sign-in with Keycloak
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/reading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/embedding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resource embedding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/aggregates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/computed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Computed fields and relationships
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/writing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/rpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Procedures and functions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/formats-errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formats, OpenAPI and errors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Realtime events
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security and roles
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security and roles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-authenticator-user-and-roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The authenticator user and roles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#json-web-tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JSON Web Tokens
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="JSON Web Tokens">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#keys-from-an-identity-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keys from an identity provider
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation cache
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-context-in-psql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request context in PSQL
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Request context in PSQL">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#row-level-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Row-level security
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-the-variables-are-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When the variables are set
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pre-request-procedure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pre-request procedure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transactions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#events" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Events
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-safeguards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other safeguards
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Other safeguards">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#request-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CORS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responses-as-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Responses as data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roles
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../schema-cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema cache
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../schemas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schemas (Firebird 6, experimental)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stability promise
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../upgrading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../postgrest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differences from PostgREST
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-authenticator-user-and-roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The authenticator user and roles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#json-web-tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JSON Web Tokens
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="JSON Web Tokens">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#keys-from-an-identity-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keys from an identity provider
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation cache
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-context-in-psql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request context in PSQL
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Request context in PSQL">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#row-level-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Row-level security
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-the-variables-are-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When the variables are set
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pre-request-procedure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pre-request procedure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transactions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#events" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Events
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-safeguards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other safeguards
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Other safeguards">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#request-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CORS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responses-as-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Responses as data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roles
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/mariuz/firebirdrest/edit/main/docs/references/security.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="security-and-roles">Security and roles<a class="headerlink" href="#security-and-roles" title="Permanent link">&para;</a></h1>
+<p>FirebirdREST follows PostgREST's model: it authenticates requests, then leaves authorization to
+the database.</p>
+<h2 id="the-authenticator-user-and-roles">The authenticator user and roles<a class="headerlink" href="#the-authenticator-user-and-roles" title="Permanent link">&para;</a></h2>
+<ol>
+<li>FirebirdREST logs in as one database user, the <strong>authenticator</strong>, which has <em>no privileges of
+   its own</em>.</li>
+<li>Each request runs in its own transaction under a <strong>Firebird role</strong>: the JWT's role claim, or
+   <code>db-anon-role</code> for requests without a token.</li>
+<li>The <code>GRANT</code>s on tables, views, procedures, functions and packages for that role decide what
+   the request may do. A refused statement becomes <code>401</code> (anonymous) or <code>403</code> (authenticated).</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">USER</span><span class="w"> </span><span class="n">authenticator</span><span class="w"> </span><span class="n">PASSWORD</span><span class="w"> </span><span class="s1">'a long random password'</span><span class="p">;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">ROLE</span><span class="w"> </span><span class="n">web_anon</span><span class="p">;</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">ROLE</span><span class="w"> </span><span class="n">web_user</span><span class="p">;</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">GRANT</span><span class="w"> </span><span class="k">SELECT</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">books</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">ROLE</span><span class="w"> </span><span class="n">web_anon</span><span class="p">;</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="k">GRANT</span><span class="w"> </span><span class="k">ALL</span><span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">books</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">ROLE</span><span class="w"> </span><span class="n">web_user</span><span class="p">;</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="k">GRANT</span><span class="w"> </span><span class="k">EXECUTE</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">PROCEDURE</span><span class="w"> </span><span class="n">place_order</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">ROLE</span><span class="w"> </span><span class="n">web_user</span><span class="p">;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="k">GRANT</span><span class="w"> </span><span class="n">web_anon</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">USER</span><span class="w"> </span><span class="n">authenticator</span><span class="p">;</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="k">GRANT</span><span class="w"> </span><span class="n">web_user</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">USER</span><span class="w"> </span><span class="n">authenticator</span><span class="p">;</span>
+</code></pre></div>
+<div class="admonition danger">
+<p class="admonition-title">Don't connect as SYSDBA or the database owner</p>
+<p>In Firebird, <code>SYSDBA</code>, the database owner and users with the <code>RDB$ADMIN</code> role bypass every
+grant: every request would be able to read and change everything. Create a separate user.
+Note that the official Docker image makes <code>FIREBIRD_USER</code> the owner of the database it
+creates.</p>
+</div>
+<p>Firebird silently ignores a role that hasn't been granted to the connecting user and carries on
+with no role. FirebirdREST checks <code>CURRENT_ROLE</code> when it opens a role's connection pool and
+refuses requests for such roles with <code>403 FBRST300</code>.</p>
+<p>Each role gets its own connection pool of <code>db-pool</code> connections, opened when the role is first
+used.</p>
+<h2 id="json-web-tokens">JSON Web Tokens<a class="headerlink" href="#json-web-tokens" title="Permanent link">&para;</a></h2>
+<p>Send <code>Authorization: Bearer &lt;token&gt;</code>. The token is verified with the keys of <code>jwt-secret</code>,
+<code>jwt-jwks-url</code>, or both:</p>
+<table>
+<thead>
+<tr>
+<th><code>jwt-secret</code></th>
+<th>Algorithms</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a string (32+ characters recommended)</td>
+<td><code>HS256</code>, <code>HS384</code>, <code>HS512</code></td>
+</tr>
+<tr>
+<td>the same, base64 encoded, with <code>jwt-secret-is-base64 = true</code></td>
+<td><code>HS256</code>, <code>HS384</code>, <code>HS512</code></td>
+</tr>
+<tr>
+<td>a PEM public key or certificate (<code>-----BEGIN PUBLIC KEY-----</code>, <code>-----BEGIN RSA PUBLIC KEY-----</code> or <code>-----BEGIN CERTIFICATE-----</code>); several blocks give several keys</td>
+<td>RSA: <code>RS256/384/512</code>, <code>PS256/384/512</code>; ECDSA: <code>ES256/384/512</code>; Ed25519: <code>EdDSA</code></td>
+</tr>
+<tr>
+<td>a JWK (<code>{"kty": "RSA", ...}</code>) or a JWKS (<code>{"keys": [...]}</code>) as JSON</td>
+<td>as for PEM, plus <code>HS*</code> for <code>"kty": "oct"</code> keys</td>
+</tr>
+<tr>
+<td><code>@/path/to/file</code>: any of the above, read from the file at startup</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>A key only verifies tokens of its own type: an RSA key never accepts an <code>HS256</code> token, so a
+public key can't be misused as an HMAC secret. A JWK with <code>alg</code> accepts only that algorithm, and
+JWKS entries with <code>"use": "enc"</code> are ignored. When the token names a key with <code>kid</code>, only keys
+with that <code>kid</code> (or without one) are tried; otherwise every key of the right type is.</p>
+<div class="admonition note">
+<p class="admonition-title">Secret files</p>
+<p>An <code>@file</code> HMAC secret is used byte for byte, including a trailing newline if the file has
+one. Write it with <code>printf '%s' "$SECRET" &gt; file</code>, or use base64 and <code>jwt-secret-is-base64</code>.</p>
+</div>
+<h3 id="keys-from-an-identity-provider">Keys from an identity provider<a class="headerlink" href="#keys-from-an-identity-provider" title="Permanent link">&para;</a></h3>
+<p>Identity providers such as Auth0, Keycloak, Okta, Azure AD or Google publish their signing keys
+as a JWKS at a URL, and rotate them. Point <code>jwt-jwks-url</code> at it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="na">jwt-jwks-url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"https://example.eu.auth0.com/.well-known/jwks.json"</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="na">jwt-aud</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"https://api.example.com"</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="na">jwt-role-claim-key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"https://example.com/role"</span>
+</code></pre></div>
+<p>FirebirdREST fetches the URL at startup and every <code>jwt-jwks-refresh</code> seconds (default 3600).
+A token whose <code>kid</code> isn't known yet triggers an extra fetch, at most once every 30 seconds, so a
+newly rotated key works right away. If a fetch fails the previous keys stay in use; if the
+first fetch fails, FirebirdREST starts anyway (anonymous requests keep working) and retries every
+30 seconds. A key that disappears from the JWKS stops working as soon as the change is fetched.</p>
+<h3 id="validation-cache">Validation cache<a class="headerlink" href="#validation-cache" title="Permanent link">&para;</a></h3>
+<p>Checking an RSA or ECDSA signature costs far more than the rest of the authentication, so
+accepted tokens are remembered: up to <code>jwt-cache-max-entries</code> tokens (default 1000; 0 turns the
+cache off), each until its <code>exp</code> or for 5 minutes, whichever is sooner. The cache is emptied when
+the JWKS keys change and when the schema cache reloads. Rejected tokens are never cached.</p>
+<p><code>exp</code> and <code>nbf</code> are checked when present. With <code>jwt-aud</code> set, the <code>aud</code> claim must match.</p>
+<p>The role is read from the <code>role</code> claim. Use <code>jwt-role-claim-key</code> for another place, with dots
+for nested claims:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="na">jwt-role-claim-key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"app_metadata.role"</span>
+</code></pre></div>
+<p>A valid token without a role claim uses <code>db-anon-role</code>. Role names must be plain identifiers
+(<code>[A-Za-z_][A-Za-z0-9_$]*</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no token and no <code>db-anon-role</code></td>
+<td><code>401 FBRST302</code></td>
+</tr>
+<tr>
+<td>malformed, badly signed, expired or wrong audience</td>
+<td><code>401 FBRST301</code></td>
+</tr>
+<tr>
+<td>role not granted to the authenticator</td>
+<td><code>403 FBRST300</code></td>
+</tr>
+<tr>
+<td>token sent but neither <code>jwt-secret</code> nor <code>jwt-jwks-url</code> configured</td>
+<td><code>500 FBRST300</code></td>
+</tr>
+<tr>
+<td>no key for the token's algorithm or <code>kid</code></td>
+<td><code>401 FBRST301</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="request-context-in-psql">Request context in PSQL<a class="headerlink" href="#request-context-in-psql" title="Permanent link">&para;</a></h2>
+<p>Request data is available to views, triggers, procedures, functions and check constraints as
+transaction-scoped context variables in the <code>USER_TRANSACTION</code> namespace:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>request.role</code></td>
+<td>Firebird role of the request</td>
+</tr>
+<tr>
+<td><code>request.method</code>, <code>request.path</code></td>
+<td>HTTP method and path</td>
+</tr>
+<tr>
+<td><code>request.jwt.claim.&lt;name&gt;</code></td>
+<td>each string, number or boolean claim, e.g. <code>request.jwt.claim.sub</code></td>
+</tr>
+<tr>
+<td><code>request.jwt.claims</code></td>
+<td>the whole claims object as JSON, if it fits in 255 characters</td>
+</tr>
+<tr>
+<td><code>request.header.origin</code>, <code>request.header.user-agent</code>, <code>request.header.x-forwarded-for</code></td>
+<td>those headers, when sent</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="n">RDB$GET_CONTEXT</span><span class="p">(</span><span class="s1">'USER_TRANSACTION'</span><span class="p">,</span><span class="w"> </span><span class="s1">'request.jwt.claim.sub'</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">RDB$DATABASE</span>
+</code></pre></div>
+<p>Values longer than 255 characters are truncated (a Firebird limit).</p>
+<h3 id="row-level-security">Row-level security<a class="headerlink" href="#row-level-security" title="Permanent link">&para;</a></h3>
+<p>Combine the context with views and triggers:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1">-- users only see their own orders</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">VIEW</span><span class="w"> </span><span class="n">my_orders</span><span class="w"> </span><span class="k">AS</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="k">SELECT</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="n">o</span><span class="w"> </span><span class="k">JOIN</span><span class="w"> </span><span class="n">customers</span><span class="w"> </span><span class="k">c</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">customer_id</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="k">WHERE</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">email</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RDB$GET_CONTEXT</span><span class="p">(</span><span class="s1">'USER_TRANSACTION'</span><span class="p">,</span><span class="w"> </span><span class="s1">'request.jwt.claim.sub'</span><span class="p">);</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1">-- and can only create orders for themselves</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">EXCEPTION</span><span class="w"> </span><span class="n">not_your_customer</span><span class="w"> </span><span class="s1">'You can only order for yourself'</span><span class="p">;</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="k">SET</span><span class="w"> </span><span class="n">TERM</span><span class="w"> </span><span class="o">^</span><span class="p">;</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TRIGGER</span><span class="w"> </span><span class="n">orders_owner</span><span class="w"> </span><span class="k">FOR</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">BEFORE</span><span class="w"> </span><span class="k">INSERT</span><span class="w"> </span><span class="k">AS</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="k">BEGIN</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">  </span><span class="k">IF</span><span class="w"> </span><span class="p">(</span><span class="k">NOT</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="p">(</span><span class="k">SELECT</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">customers</span><span class="w"> </span><span class="k">c</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">NEW</span><span class="p">.</span><span class="n">customer_id</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">        </span><span class="k">AND</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">email</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RDB$GET_CONTEXT</span><span class="p">(</span><span class="s1">'USER_TRANSACTION'</span><span class="p">,</span><span class="w"> </span><span class="s1">'request.jwt.claim.sub'</span><span class="p">)))</span><span class="w"> </span><span class="k">THEN</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">    </span><span class="k">EXCEPTION</span><span class="w"> </span><span class="n">not_your_customer</span><span class="p">;</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="k">END</span><span class="o">^</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="k">SET</span><span class="w"> </span><span class="n">TERM</span><span class="w"> </span><span class="p">;</span><span class="o">^</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="k">GRANT</span><span class="w"> </span><span class="k">USAGE</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">EXCEPTION</span><span class="w"> </span><span class="n">not_your_customer</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">TRIGGER</span><span class="w"> </span><span class="n">orders_owner</span><span class="p">;</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="k">GRANT</span><span class="w"> </span><span class="k">SELECT</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">customers</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">TRIGGER</span><span class="w"> </span><span class="n">orders_owner</span><span class="p">;</span>
+</code></pre></div>
+<h3 id="when-the-variables-are-set">When the variables are set<a class="headerlink" href="#when-the-variables-are-set" title="Permanent link">&para;</a></h3>
+<p>Setting the variables costs a database round trip, so by default (<code>db-request-context = auto</code>)
+FirebirdREST only does it when some object in the database could read them. At each schema
+load it searches the source of every view, trigger, procedure, function and package, and every
+computed, default and check expression, for the text <code>request.</code>. Routines whose source is not
+stored also count as possible readers. The <code>schema cache loaded</code> log line shows the outcome as
+<code>request_context=true</code> or <code>false</code>.</p>
+<p>Use <code>db-request-context = always</code> if you read the variables from code FirebirdREST can't see
+(for example a UDR written in C++, or dynamic SQL that builds the names), or <code>never</code> to skip
+them entirely.</p>
+<h2 id="pre-request-procedure">Pre-request procedure<a class="headerlink" href="#pre-request-procedure" title="Permanent link">&para;</a></h2>
+<p><code>db-pre-request</code> names an executable procedure that runs at the start of every request, after
+the context variables are set. Raise an exception to reject the request:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">EXCEPTION</span><span class="w"> </span><span class="n">banned</span><span class="w"> </span><span class="s1">'This account is suspended'</span><span class="p">;</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">SET</span><span class="w"> </span><span class="n">TERM</span><span class="w"> </span><span class="o">^</span><span class="p">;</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">PROCEDURE</span><span class="w"> </span><span class="n">check_request</span><span class="w"> </span><span class="k">AS</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="k">BEGIN</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span><span class="k">IF</span><span class="w"> </span><span class="p">(</span><span class="k">EXISTS</span><span class="w"> </span><span class="p">(</span><span class="k">SELECT</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">banned_users</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">        </span><span class="k">WHERE</span><span class="w"> </span><span class="n">email</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RDB$GET_CONTEXT</span><span class="p">(</span><span class="s1">'USER_TRANSACTION'</span><span class="p">,</span><span class="w"> </span><span class="s1">'request.jwt.claim.sub'</span><span class="p">)))</span><span class="w"> </span><span class="k">THEN</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="k">EXCEPTION</span><span class="w"> </span><span class="n">banned</span><span class="p">;</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="k">END</span><span class="o">^</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="k">SET</span><span class="w"> </span><span class="n">TERM</span><span class="w"> </span><span class="p">;</span><span class="o">^</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="k">GRANT</span><span class="w"> </span><span class="k">EXECUTE</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">PROCEDURE</span><span class="w"> </span><span class="n">check_request</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">ROLE</span><span class="w"> </span><span class="n">web_anon</span><span class="p">;</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="k">GRANT</span><span class="w"> </span><span class="k">EXECUTE</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">PROCEDURE</span><span class="w"> </span><span class="n">check_request</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">ROLE</span><span class="w"> </span><span class="n">web_user</span><span class="p">;</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="k">GRANT</span><span class="w"> </span><span class="k">SELECT</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">banned_users</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">PROCEDURE</span><span class="w"> </span><span class="n">check_request</span><span class="p">;</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="k">GRANT</span><span class="w"> </span><span class="k">USAGE</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">EXCEPTION</span><span class="w"> </span><span class="n">banned</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="k">PROCEDURE</span><span class="w"> </span><span class="n">check_request</span><span class="p">;</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="na">db-pre-request</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"check_request"</span>
+</code></pre></div>
+<p>A banned user's requests then fail with
+<code>400 {"message":"This account is suspended","hint":"exception BANNED",...}</code>.</p>
+<h2 id="transactions">Transactions<a class="headerlink" href="#transactions" title="Permanent link">&para;</a></h2>
+<p>Every write runs in its own transaction, committed when the request succeeds and rolled back
+otherwise. Reads (<code>GET</code>, <code>HEAD</code>) run in read-only <code>READ COMMITTED</code> transactions that are
+reused: each connection of a role keeps one open and serves request after request with it.
+A statement in such a transaction sees the data committed when the statement starts, exactly
+as it would in a transaction of its own, so responses are the same; what's saved is the
+transaction start and commit round trips of every read. Firebird treats read-only
+read-committed transactions as pre-committed, so the long-lived ones don't hold back garbage
+collection. They are recycled after 1000 requests or 5 minutes, and request context variables
+set by one request are cleared by the next. <code>db-read-tx-reuse = false</code> gives every read its
+own transaction. Query plan requests always use a fresh transaction.</p>
+<h2 id="events">Events<a class="headerlink" href="#events" title="Permanent link">&para;</a></h2>
+<p><code>GET /events/&lt;name&gt;</code> streams Firebird event notifications, which carry only a name and a count.
+Only the names in <code>db-events</code> are exposed, to the roles in <code>db-events-roles</code> (any authenticated
+role when unset). A listener learns that something happened, and reads what through the API with
+its own grants. See <a href="../../api/events/">realtime events</a>.</p>
+<h2 id="other-safeguards">Other safeguards<a class="headerlink" href="#other-safeguards" title="Permanent link">&para;</a></h2>
+<p>The URL grammar is fuzzed in CI: <code>FuzzReadSQL</code> turns arbitrary query strings into the SQL of every
+statement a read would run and checks that values only ever reach Firebird as parameters (no
+string literal, comment or statement separator outside quoted identifiers), that every
+identifier comes from the schema, and that bad input is refused with a 4xx error, never a panic
+or a 500. It runs for a minute on every push and ten minutes in the weekly scheduled run.</p>
+<ul>
+<li><code>PATCH</code> and <code>DELETE</code> without filters are refused (<code>db-safe-updates</code>).</li>
+<li><code>GET</code> and <code>HEAD</code> run in read-only transactions.</li>
+<li><code>db-max-rows</code> caps the rows a single read can return.</li>
+<li>Identifiers from the URL are checked against the schema cache and always quoted; values are
+  always sent as parameters, never inlined into SQL.</li>
+<li>Error responses never carry the database login, host or internal error text: Firebird's
+  "Effective user is ..." line is removed, and unexpected errors return a generic message while
+  the cause goes to the log.</li>
+<li>The OpenAPI document at <code>/</code> lists only what the caller's role may use (<code>openapi-mode</code>).</li>
+</ul>
+<h3 id="request-limits">Request limits<a class="headerlink" href="#request-limits" title="Permanent link">&para;</a></h3>
+<p>A request is bounded in time and size, so one client can't tie up the server:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Limit</th>
+<th>Setting</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Time to send and handle a request</td>
+<td>60 s</td>
+<td><code>server-request-timeout</code> (<code>503 FBRST002</code> when exceeded)</td>
+</tr>
+<tr>
+<td>Request body</td>
+<td>16 MB</td>
+<td><code>server-max-body-size</code> (<code>413 FBRST134</code>)</td>
+</tr>
+<tr>
+<td>Request line and headers</td>
+<td>64 KB</td>
+<td>fixed</td>
+</tr>
+<tr>
+<td><code>and=</code>/<code>or=</code> nesting</td>
+<td>16 levels</td>
+<td>fixed (<code>400</code>)</td>
+</tr>
+<tr>
+<td>Values in one <code>in.()</code> filter</td>
+<td>1000</td>
+<td>fixed (<code>400</code>)</td>
+</tr>
+<tr>
+<td>Objects in <code>Prefer: params=multiple-objects</code> for a selectable procedure</td>
+<td>200</td>
+<td>fixed (<code>400 FBRST128</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>The body is read in full before the transaction starts, so a slow client never holds a database
+connection while sending.</p>
+<h3 id="cors">CORS<a class="headerlink" href="#cors" title="Permanent link">&para;</a></h3>
+<p><code>server-cors-allowed-origins = "*"</code> (the default) answers any origin with
+<code>Access-Control-Allow-Origin: *</code> and no credentials, which is enough for bearer tokens set by
+JavaScript. To let browsers send credentials (cookies, HTTP auth from a proxy in front), list
+the origins explicitly: each is reflected with <code>Access-Control-Allow-Credentials: true</code> and
+<code>Vary: Origin</code>. An empty value turns the CORS headers off.</p>
+<h3 id="responses-as-data">Responses as data<a class="headerlink" href="#responses-as-data" title="Permanent link">&para;</a></h3>
+<p>Every response carries <code>X-Content-Type-Options: nosniff</code> and
+<code>Content-Security-Policy: default-src 'none'; sandbox</code>, so a browser never treats a value stored
+in the database as a page of the API's origin. A <a href="../../api/formats-errors/#single-values-and-files">single value</a>
+requested as <code>text/html</code>, SVG, XML, JavaScript or PDF is sent with <code>Content-Disposition:
+attachment</code>: it downloads instead of rendering.</p>
+<h3 id="roles">Roles<a class="headerlink" href="#roles" title="Permanent link">&para;</a></h3>
+<p>Role names from tokens are folded to upper case, as Firebird folds unquoted identifiers, so
+<code>web_user</code> and <code>WEB_USER</code> share one connection pool. Only roles the authenticator is granted get
+a pool; the check happens when the pool is opened.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../../api/events/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Realtime events">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Realtime events
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../configuration/" class="md-footer__link md-footer__link--next" aria-label="Next: Configuration">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Configuration
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      MIT licensed. API design after PostgREST.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -420,8 +420,14 @@ func scanNode(ctx context.Context, q Querier, n *ReadNode, b *Builder, sel []str
 				r.obj.Set(f.Key, OutputCtx(ctx, vals[i], fieldCols[i]))
 			}
 		}
-		r.hidden = vals[nf : nf+nHidden]
-		r.match = vals[nf+nHidden : nf+nHidden+len(matchCols)]
+		// copies, not slices of vals: a slice would keep the whole scan
+		// buffer, raw driver values included, alive as long as the row
+		if nHidden > 0 {
+			r.hidden = append([]any(nil), vals[nf:nf+nHidden]...)
+		}
+		if len(matchCols) > 0 {
+			r.match = append([]any(nil), vals[nf+nHidden:nf+nHidden+len(matchCols)]...)
+		}
 		if err := fn(r); err != nil {
 			return err
 		}
@@ -430,37 +436,75 @@ func scanNode(ctx context.Context, q Querier, n *ReadNode, b *Builder, sel []str
 }
 
 // jsonChunk is the size at which ReadJSONArray hands a piece of the body
-// over: large enough for few calls, small enough that a piece's growth
-// (append doubles) costs little.
+// over. Each piece is allocated at its full size (plus room for the row
+// that crosses the mark), so it doesn't grow by doubling and leave copies
+// behind for the garbage collector.
 const jsonChunk = 1 << 20
 
-// ReadJSONArray reads a tree without children and encodes each row as JSON
-// as it is read, handing the body over in chunks through sink, so a large
-// result costs its JSON size in memory, not the rows as well. It returns
-// the number of rows. Read does the same for trees with embedded resources,
-// whose rows must be kept until their children are attached.
+func newChunk() []byte { return make([]byte, 0, jsonChunk+jsonChunk/8) }
+
+// ReadJSONArray reads a tree and encodes it as a JSON array, handing the
+// body over in chunks through sink, so a large result costs about its JSON
+// size in memory rather than its rows and its JSON both. It returns the
+// number of root rows.
+//
+// Without embedded resources each row is encoded as it is read. With them,
+// the root rows are read first (their keys select the children); then, for
+// a to-many embed, the children are attached and the rows encoded and
+// released a batch of chunkSize parents at a time, which is the batch the
+// children are queried in anyway, so no query is added. To-one embeds are
+// shared between parents (many books, one author), so a tree with only
+// those is attached in one pass, as before, and only encoded progressively.
 func ReadJSONArray(ctx context.Context, q Querier, n *ReadNode, sink func([]byte)) (int, error) {
-	buf := make([]byte, 0, 64<<10)
+	buf := newChunk()
 	buf = append(buf, '[')
 	if n.Limit == 0 {
 		sink(append(buf, ']'))
 		return 0, nil
 	}
 	count := 0
-	err := queryNodeEach(ctx, q, n, "t0", true, func(r *row) error {
+	emit := func(o *Obj) {
 		if count > 0 {
 			buf = append(buf, ',')
 		}
 		count++
-		buf = AppendJSON(buf, r.obj)
+		buf = AppendJSON(buf, o)
 		if len(buf) >= jsonChunk {
 			sink(buf)
-			buf = make([]byte, 0, 64<<10)
+			buf = newChunk()
 		}
-		return nil
-	})
+	}
+	if len(n.Children) == 0 {
+		err := queryNodeEach(ctx, q, n, "t0", true, func(r *row) error {
+			emit(r.obj)
+			return nil
+		})
+		if err != nil {
+			return 0, err
+		}
+		sink(append(buf, ']'))
+		return count, nil
+	}
+	rows, err := queryNode(ctx, q, n, "t0", nil, nil, true)
 	if err != nil {
 		return 0, err
+	}
+	batch := len(rows)
+	for _, c := range n.Children {
+		if !c.Join.Single {
+			batch = chunkSize
+			break
+		}
+	}
+	for start := 0; start < len(rows); start += batch {
+		end := min(start+batch, len(rows))
+		if err := attachChildren(ctx, q, n, rows[start:end]); err != nil {
+			return 0, err
+		}
+		for i := start; i < end; i++ {
+			emit(rows[i].obj)
+			rows[i] = nil // encoded: let the row and its children go
+		}
 	}
 	sink(append(buf, ']'))
 	return count, nil

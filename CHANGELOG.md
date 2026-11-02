@@ -5,6 +5,14 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Changed
+- Reads with a to-many embed encode and release their rows 400 parents at a time instead of
+  building the whole tree first: 2,000 authors with their 100,000 books (a 9.5 MB response)
+  peak at about 40 MB of process memory instead of 110 MB, and finish slightly faster. The
+  queries are the same ones. Child rows also no longer keep their raw database values alive.
+  Embedded rows without an `order` may come in a different order than before; their order
+  was never defined.
+
 ## [0.8.0] - 2026-11-01
 
 ### Added

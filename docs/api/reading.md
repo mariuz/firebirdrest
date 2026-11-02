@@ -119,9 +119,14 @@ Firebird has to skip those rows. For deep paging, filter on an indexed key inste
 
 A large page is encoded as its rows are read, so a result costs about its JSON size in memory
 on the server (a 100 MB response peaks near 200 MB of process memory); the response is sent
-once complete, because `Content-Range` needs the number of rows. Reads with embedded resources
-keep their rows until the children are attached and cost more. For exports, page with `limit`
-and `offset` or a `Range` header.
+once complete, because `Content-Range` needs the number of rows. With a to-many embed
+(`authors?select=name,books(title)`), the related rows are fetched, encoded and released 400
+parents at a time; with to-one embeds only (`books?select=title,authors(name)`), every row is
+read before the related ones are, so such a page costs its rows plus its JSON. For exports, page
+with `limit` and `offset` or a `Range` header.
+
+Embedded rows come in the order of `<embed>.order`; without one their order is whatever Firebird
+returns, which may differ between requests.
 
 ## Counting
 

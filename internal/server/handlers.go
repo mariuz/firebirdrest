@@ -89,12 +89,12 @@ func (s *Server) read(rc *reqCtx, rel *schema.Relation) error {
 // respondRead runs a read node and writes rows, Content-Range and status.
 func (s *Server) respondRead(rc *reqCtx, n *query.ReadNode) error {
 	ctx := rc.r.Context()
-	// A plain JSON array of a tree without embedded resources is encoded as
-	// the rows are read, so a large result costs its JSON size in memory
-	// rather than the rows and the JSON both (see query.ReadJSONArray). The
-	// body is still complete before the headers go out: Content-Range needs
-	// the number of rows.
-	if len(n.Children) == 0 && rawType(rc.r, mimeJSON, mimeObject, mimeCSV) == "" {
+	// A JSON array is encoded as the rows are read (with embedded resources,
+	// a batch of parents at a time), so a large result costs about its JSON
+	// size in memory rather than the rows and the JSON both (see
+	// query.ReadJSONArray). The body is still complete before the headers
+	// go out: Content-Range needs the number of rows.
+	if rawType(rc.r, mimeJSON, mimeObject, mimeCSV) == "" {
 		if mt, err := negotiate(rc.r, mimeJSON, mimeObject, mimeCSV); err == nil && mt == mimeJSON {
 			var chunks [][]byte
 			nrows, err := query.ReadJSONArray(ctx, rc.tx, n, func(b []byte) { chunks = append(chunks, b) })

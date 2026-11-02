@@ -11,7 +11,7 @@ All notable changes to FirebirdREST are listed here. The project follows
   peak at about 40 MB of process memory instead of 110 MB, and finish slightly faster. The
   queries are the same ones. Child rows also no longer keep their raw database values alive.
   Embedded rows without an `order` may come in a different order than before; their order
-  was never defined.
+  was never defined. Small responses start with a small buffer, so they cost no more than before.
 
 ## [0.8.0] - 2026-11-01
 

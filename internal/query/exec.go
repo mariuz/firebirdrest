@@ -436,12 +436,15 @@ func scanNode(ctx context.Context, q Querier, n *ReadNode, b *Builder, sel []str
 }
 
 // jsonChunk is the size at which ReadJSONArray hands a piece of the body
-// over. Each piece is allocated at its full size (plus room for the row
-// that crosses the mark), so it doesn't grow by doubling and leave copies
-// behind for the garbage collector.
+// over. The first piece starts small, since most responses are a few rows;
+// once a response has filled one, the next pieces are allocated at their
+// full size (plus room for the row that crosses the mark), so a large
+// response doesn't grow every piece by doubling and leave copies behind for
+// the garbage collector.
 const jsonChunk = 1 << 20
 
-func newChunk() []byte { return make([]byte, 0, jsonChunk+jsonChunk/8) }
+func firstChunk() []byte { return make([]byte, 0, 8<<10) }
+func newChunk() []byte   { return make([]byte, 0, jsonChunk+jsonChunk/8) }
 
 // ReadJSONArray reads a tree and encodes it as a JSON array, handing the
 // body over in chunks through sink, so a large result costs about its JSON
@@ -456,7 +459,7 @@ func newChunk() []byte { return make([]byte, 0, jsonChunk+jsonChunk/8) }
 // shared between parents (many books, one author), so a tree with only
 // those is attached in one pass, as before, and only encoded progressively.
 func ReadJSONArray(ctx context.Context, q Querier, n *ReadNode, sink func([]byte)) (int, error) {
-	buf := newChunk()
+	buf := firstChunk()
 	buf = append(buf, '[')
 	if n.Limit == 0 {
 		sink(append(buf, ']'))

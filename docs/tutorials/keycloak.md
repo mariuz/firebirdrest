@@ -59,11 +59,11 @@ It creates:
 | user `ana`, password `ana-password` | `firebird_role` = `web_user` |
 | user `bob`, password `bob-password` | no `firebird_role` |
 
-FirebirdREST reads the role from a claim that holds one string (`jwt-role-claim-key`, `role` by
-default, or a dotted path such as `app_metadata.role`). Keycloak's own roles come as a list
-(`realm_access.roles`), so a user attribute mapped to a `role` claim is the direct way to name
-one Firebird role per user. In the admin console these are under *Users → ana → Attributes* and
-*Clients → bookstore-app → Client scopes → bookstore-app-dedicated*.
+FirebirdREST reads the role from one string in the token, at the path in `jwt-role-claim-key`
+(`role` by default). Keycloak's own realm roles come as a list, `realm_access.roles`; a path
+with an index such as `realm_access.roles[0]` can read from it, but the order of that list isn't
+something to rely on. A user attribute mapped to a `role` claim names exactly one Firebird role
+per user, which is why this tutorial uses one.
 
 ## 3. Sign in and call the API
 

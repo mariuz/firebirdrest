@@ -367,6 +367,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 		return s.serveOpenAPI(w, r, sc)
 	}
 
+	if normalizeAccept(r) {
+		r = r.WithContext(query.WithStripNulls(r.Context()))
+	}
 	rc := &reqCtx{w: w, r: r, sc: sc, prefer: parsePrefer(r.Header.Values("Prefer"))}
 	if err := rc.prefer.check(); err != nil {
 		return err

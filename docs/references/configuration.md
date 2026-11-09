@@ -76,7 +76,7 @@ Don't add `role=` yourself: FirebirdREST sets the role per request.
 | `jwt-aud` | `FBREST_JWT_AUD` | none | required `aud` claim |
 | `jwt-iss` | `FBREST_JWT_ISS` | none | accepted `iss` claims, comma separated; tokens from any other issuer, or without one, are refused |
 | `jwt-leeway` | `FBREST_JWT_LEEWAY` | `0` | seconds of clock difference tolerated on `exp`, `nbf` and `iat` (at most 300) |
-| `jwt-role-claim-key` | `FBREST_JWT_ROLE_CLAIM_KEY` | `role` | claim holding the role; dots for nested claims (`app_metadata.role`) |
+| `jwt-role-claim-key` | `FBREST_JWT_ROLE_CLAIM_KEY` | `role` | claim holding the role: `app_metadata.role`, `realm_access.roles[0]`, `."https://example.com/role"` ([details](security.md#json-web-tokens)) |
 
 ## Server
 

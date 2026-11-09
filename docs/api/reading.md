@@ -42,14 +42,19 @@ are combined with `AND`, and one column may be filtered several times
 | `is` | `IS NULL`, `IS NOT NULL` (`not_null`), `IS TRUE/FALSE/UNKNOWN` | `?born=is.null` |
 | `isdistinct` | `IS DISTINCT FROM` | `?a=isdistinct.5` |
 | `not.<op>` | `NOT (...)` | `?id=not.in.(1,2)` |
+| `<op>(any)`, `<op>(all)` | the comparison with each value, joined with `OR` or `AND` | `?title=like(any).{*dragon*,*sea*}`, `?id=not.eq(any).{1,2}` |
 
 `containing`, `starting` and `similar` are Firebird operators that PostgREST does not have.
 `starting` can use an index on the column; `like`/`ilike` patterns, `containing` and `similar`
 scan the rows.
 
+`(any)` and `(all)` work with `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `similar`,
+`containing` and `starting`, as in PostgREST. The values go in braces; `{}` matches no row with
+`any` and every row with `all`.
+
 Values are converted to the column type: booleans accept `true/false/t/f/1/0`, dates and
 timestamps accept ISO 8601 (`2024-05-06`, `2024-05-06T07:08:09Z`). Wrap values that contain
-commas or parentheses in double quotes inside `in.(...)`.
+commas or parentheses in double quotes inside `in.(...)` and `{...}`.
 
 ### Logic trees
 

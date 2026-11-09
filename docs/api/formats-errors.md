@@ -9,6 +9,8 @@ Choose with the `Accept` header:
 | `application/json` (default, also `*/*`) | JSON array of objects |
 | `text/csv` | header row plus one line per row; embedded values are written as JSON |
 | `application/vnd.pgrst.object+json` | a single JSON object, or `406` unless exactly one row matches |
+| `application/vnd.pgrst.array+json` | the same as `application/json` |
+| either of the two with `;nulls=stripped` | members whose value is `null` are left out, at every level (supabase-js `.stripNulls()`) |
 | any other concrete type, e.g. `text/plain`, `application/octet-stream`, `image/png` | a single value as is: see below |
 
 ```sh

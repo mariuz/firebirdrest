@@ -466,12 +466,17 @@ func ReadJSONArray(ctx context.Context, q Querier, n *ReadNode, sink func([]byte
 		return 0, nil
 	}
 	count := 0
+	strip := StripNullsIn(ctx)
 	emit := func(o *Obj) {
 		if count > 0 {
 			buf = append(buf, ',')
 		}
 		count++
-		buf = AppendJSON(buf, o)
+		if strip {
+			buf = AppendJSON(buf, StripNulls(o))
+		} else {
+			buf = AppendJSON(buf, o)
+		}
 		if len(buf) >= jsonChunk {
 			sink(buf)
 			buf = newChunk()
@@ -745,6 +750,55 @@ func chunks(keys [][]any, size int) [][][]any {
 
 type timeZoneKey struct{}
 type rawBinaryKey struct{}
+
+type stripNullsKey struct{}
+
+// WithStripNulls returns a context whose JSON responses leave out object
+// members whose value is null (Accept: ...; nulls=stripped).
+func WithStripNulls(ctx context.Context) context.Context {
+	return context.WithValue(ctx, stripNullsKey{}, true)
+}
+
+// StripNullsIn reports whether ctx asks for null members to be left out.
+func StripNullsIn(ctx context.Context) bool { return ctx.Value(stripNullsKey{}) != nil }
+
+// StripNulls returns v without null members in its objects, at every level
+// (array elements that are null stay, as in PostgreSQL's json_strip_nulls).
+func StripNulls(v any) any {
+	switch x := v.(type) {
+	case *Obj:
+		if x == nil {
+			return x
+		}
+		o := &Obj{Keys: make([]string, 0, len(x.Keys)), Vals: make([]any, 0, len(x.Vals))}
+		for i, k := range x.Keys {
+			if x.Vals[i] == nil {
+				continue
+			}
+			if inner, ok := x.Vals[i].(*Obj); ok && inner == nil {
+				continue
+			}
+			o.Keys = append(o.Keys, k)
+			o.Vals = append(o.Vals, StripNulls(x.Vals[i]))
+		}
+		return o
+	case []*Obj:
+		out := make([]*Obj, len(x))
+		for i, e := range x {
+			if s, ok := StripNulls(e).(*Obj); ok {
+				out[i] = s
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = StripNulls(e)
+		}
+		return out
+	}
+	return v
+}
 
 // WithRawBinary returns a context whose reads keep binary values as bytes
 // instead of base64 text: for a response that sends one value as it is.

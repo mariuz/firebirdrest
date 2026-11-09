@@ -100,12 +100,17 @@ the JWKS keys change and when the schema cache reloads. Rejected tokens are neve
 
 `exp` and `nbf` are checked when present. With `jwt-aud` set, the `aud` claim must match.
 
-The role is read from the `role` claim. Use `jwt-role-claim-key` for another place, with dots
-for nested claims:
+The role is read from the `role` claim. Use `jwt-role-claim-key` for another place, with
+PostgREST's path syntax:
 
 ```ini
-jwt-role-claim-key = "app_metadata.role"
+jwt-role-claim-key = "app_metadata.role"            # a nested claim
+jwt-role-claim-key = "realm_access.roles[0]"        # the first of a list (Keycloak); [-1] is the last
+jwt-role-claim-key = '."https://example.com/role"'  # a claim whose name has dots, in double quotes
 ```
+
+A claim named exactly as the setting, dots included, is read as that claim, so
+`jwt-role-claim-key = "https://example.com/role"` works too.
 
 A valid token without a role claim uses `db-anon-role`. Role names must be plain identifiers
 (`[A-Za-z_][A-Za-z0-9_$]*`).

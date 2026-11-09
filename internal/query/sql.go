@@ -175,31 +175,36 @@ func (b *Builder) writeFilter(n *ReadNode, alias string, f *Filter) error {
 	e := baseExpr(alias, fld)
 	b.W("(")
 	defer b.W(")")
-	switch f.Op {
-	case "eq", "neq", "gt", "gte", "lt", "lte":
-		op := map[string]string{"eq": "=", "neq": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[f.Op]
-		v, err := Coerce(c, f.Value)
-		if err != nil {
-			return err
+	if f.Quant != "" {
+		// op(any).{a,b}: (e op a OR e op b); op(all): AND. No values: any
+		// matches nothing, all matches everything, as for an empty list
+		if len(f.List) == 0 {
+			if f.Quant == "any" {
+				b.W("1 = 0")
+			} else {
+				b.W("1 = 1")
+			}
+			return nil
 		}
-		b.W(e, " ", op, " ")
-		b.Arg(v)
-	case "like":
-		b.W(e, " LIKE ")
-		b.Arg(strings.ReplaceAll(f.Value, "*", "%"))
-	case "ilike":
-		b.W("UPPER(", e, ") LIKE UPPER(")
-		b.Arg(strings.ReplaceAll(f.Value, "*", "%"))
-		b.W(")")
-	case "similar":
-		b.W(e, " SIMILAR TO ")
-		b.Arg(f.Value)
-	case "containing":
-		b.W(e, " CONTAINING ")
-		b.Arg(f.Value)
-	case "starting":
-		b.W(e, " STARTING WITH ")
-		b.Arg(f.Value)
+		join := " OR "
+		if f.Quant == "all" {
+			join = " AND "
+		}
+		for i, v := range f.List {
+			if i > 0 {
+				b.W(join)
+			}
+			b.W("(")
+			if err := b.writeComparison(e, c, f.Op, v); err != nil {
+				return err
+			}
+			b.W(")")
+		}
+		return nil
+	}
+	switch f.Op {
+	case "eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "similar", "containing", "starting":
+		return b.writeComparison(e, c, f.Op, f.Value)
 	case "isdistinct":
 		v, err := Coerce(c, f.Value)
 		if err != nil {
@@ -546,4 +551,35 @@ func CoerceJSON(c *schema.Column, v any) (any, error) {
 		// objects and arrays are stored as their JSON text
 		return marshalJSON(v)
 	}
+}
+
+// writeComparison writes "e op ?" for one value of a single-value operator.
+func (b *Builder) writeComparison(e string, c *schema.Column, op, value string) error {
+	switch op {
+	case "eq", "neq", "gt", "gte", "lt", "lte":
+		sqlOp := map[string]string{"eq": "=", "neq": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[op]
+		v, err := Coerce(c, value)
+		if err != nil {
+			return err
+		}
+		b.W(e, " ", sqlOp, " ")
+		b.Arg(v)
+	case "like":
+		b.W(e, " LIKE ")
+		b.Arg(strings.ReplaceAll(value, "*", "%"))
+	case "ilike":
+		b.W("UPPER(", e, ") LIKE UPPER(")
+		b.Arg(strings.ReplaceAll(value, "*", "%"))
+		b.W(")")
+	case "similar":
+		b.W(e, " SIMILAR TO ")
+		b.Arg(value)
+	case "containing":
+		b.W(e, " CONTAINING ")
+		b.Arg(value)
+	case "starting":
+		b.W(e, " STARTING WITH ")
+		b.Arg(value)
+	}
+	return nil
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -58,15 +59,58 @@ func (s *Server) authenticate(rc *reqCtx) error {
 	return nil
 }
 
-// claimPath reads a dotted claim path such as "app_metadata.role".
+// claimPath reads the role from the claims along path, PostgREST's
+// jwt-role-claim-key syntax: dotted keys ("app_metadata.role"), keys in
+// double quotes for names with dots (."https://example.com/role"), and
+// array indexes ("realm_access.roles[0]", negative from the end). A path
+// that is itself the name of a claim is read as that claim.
 func claimPath(c map[string]any, path string) string {
+	if v, ok := c[strings.TrimPrefix(path, ".")].(string); ok {
+		return v
+	}
 	var cur any = c
-	for _, p := range strings.Split(strings.TrimPrefix(path, "."), ".") {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return ""
+	rest := strings.TrimPrefix(strings.TrimSpace(path), ".")
+	for rest != "" {
+		var key string
+		if strings.HasPrefix(rest, `"`) {
+			end := strings.Index(rest[1:], `"`)
+			if end < 0 {
+				return ""
+			}
+			key, rest = rest[1:end+1], rest[end+2:]
+		} else {
+			end := strings.IndexAny(rest, ".[")
+			if end < 0 {
+				end = len(rest)
+			}
+			key, rest = rest[:end], rest[end:]
 		}
-		cur = m[p]
+		if key != "" {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				return ""
+			}
+			cur = m[key]
+		}
+		for strings.HasPrefix(rest, "[") {
+			end := strings.Index(rest, "]")
+			if end < 0 {
+				return ""
+			}
+			i, err := strconv.Atoi(strings.TrimSpace(rest[1:end]))
+			arr, ok := cur.([]any)
+			if err != nil || !ok {
+				return ""
+			}
+			if i < 0 {
+				i += len(arr)
+			}
+			if i < 0 || i >= len(arr) {
+				return ""
+			}
+			cur, rest = arr[i], rest[end+1:]
+		}
+		rest = strings.TrimPrefix(rest, ".")
 	}
 	s, _ := cur.(string)
 	return s

@@ -189,6 +189,8 @@ func FuzzReadSQL(f *testing.F) {
 		"or=(id.eq.1)),title.eq.x)",
 		"limit=99999999999999999999&offset=-1",
 		"books.limit=1&authors.order=nope",
+		"title=like(any).{*a*,\"b,c\"}&id=not.eq(all).{1,2}&or=(title.ilike(any).{x},id.gt(any).{})",
+		"title=in(any).{a}&title=like(all).*nobrace*&price=gt(any).{1,2",
 	} {
 		f.Add(uint8(0), seed)
 		f.Add(uint8(1), seed)

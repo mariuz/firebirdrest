@@ -46,6 +46,15 @@ type Filter struct {
 	Op     string
 	Value  string
 	List   []string
+	// Quant is "any" or "all" for op(any).{a,b} / op(all).{a,b}: the
+	// comparison is made with every value of List, joined with OR or AND
+	Quant string
+}
+
+// quantifiable lists the operators that take (any) and (all) modifiers.
+var quantifiable = map[string]bool{
+	"eq": true, "neq": true, "gt": true, "gte": true, "lt": true, "lte": true,
+	"like": true, "ilike": true, "similar": true, "containing": true, "starting": true,
 }
 
 // Node is an element of a condition tree: either a Filter or an and/or group.
@@ -219,9 +228,30 @@ func ParseFilter(field, raw string) (*Filter, error) {
 		return nil, badRequest("FBRST100", "failed to parse filter %s=%s (expected operator.value)", field, raw)
 	}
 	f.Op, f.Value = rest[:dot], rest[dot+1:]
+	for _, q := range []string{"any", "all"} {
+		if base, ok := strings.CutSuffix(f.Op, "("+q+")"); ok {
+			if !quantifiable[base] {
+				return nil, badRequest("FBRST100", "operator %q in filter on %q takes no (%s) modifier", base, field, q)
+			}
+			f.Op, f.Quant = base, q
+			v := strings.TrimSpace(f.Value)
+			if !strings.HasPrefix(v, "{") || !strings.HasSuffix(v, "}") {
+				return nil, badRequest("FBRST100", "%s(%s) filter on %q must look like %s(%s).{a,b,c}", base, q, field, base, q)
+			}
+			if inner := v[1 : len(v)-1]; strings.TrimSpace(inner) != "" {
+				for _, item := range splitTop(inner, ',') {
+					if len(f.List) >= maxInList {
+						return nil, badRequest("FBRST102", "%s(%s) has more than %d values", base, q, maxInList)
+					}
+					f.List = append(f.List, unquote(strings.TrimSpace(item)))
+				}
+			}
+			return f, nil
+		}
+	}
 	if !operators[f.Op] {
 		return nil, &Error{Status: 400, Code: "FBRST100", Message: fmt.Sprintf("unknown operator %q in filter on %q", f.Op, field),
-			Hint: "valid operators: eq, neq, gt, gte, lt, lte, like, ilike, similar, in, is, isdistinct, containing, starting"}
+			Hint: "valid operators: eq, neq, gt, gte, lt, lte, like, ilike, similar, in, is, isdistinct, containing, starting; most also as op(any).{a,b} or op(all).{a,b}"}
 	}
 	switch f.Op {
 	case "in":

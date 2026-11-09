@@ -444,7 +444,7 @@ func (s *Server) writeValue(rc *reqCtx, v any, col *schema.Column) error {
 	if _, err := negotiate(rc.r, mimeJSON, mimeObject); err != nil {
 		return err
 	}
-	writeBody(rc, http.StatusOK, mimeJSON, query.AppendJSON(nil, v))
+	writeBody(rc, http.StatusOK, mimeJSON, query.AppendJSON(nil, stripped(rc, v)))
 	return nil
 }
 

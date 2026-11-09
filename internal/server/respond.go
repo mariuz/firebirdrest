@@ -294,14 +294,14 @@ func writeRows(rc *reqCtx, status int, rows []*query.Obj) error {
 				Message: "JSON object requested, multiple (or no) rows returned",
 				Details: fmt.Sprintf("the result contains %d rows", len(rows))}
 		}
-		body = query.AppendJSON(make([]byte, 0, 512), rows[0])
+		body = query.AppendJSON(make([]byte, 0, 512), stripped(rc, rows[0]))
 	case mimeCSV:
 		body, err = toCSV(rows)
 	default:
 		if rows == nil {
 			rows = []*query.Obj{}
 		}
-		body = query.AppendJSON(make([]byte, 0, 256*len(rows)+2), rows)
+		body = query.AppendJSON(make([]byte, 0, 256*len(rows)+2), stripped(rc, rows))
 		mt = mimeJSON
 	}
 	if err != nil {
@@ -358,6 +358,10 @@ func readBody(r *http.Request) ([]map[string]any, bool, error) {
 		return nil, false, err
 	}
 	mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mt == mimeCSV {
+		rows, err := csvRows(data)
+		return rows, true, err
+	}
 	trimmed := bytes.TrimSpace(data)
 	looksJSON := len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[')
 	if mt == "application/x-www-form-urlencoded" && !looksJSON {
@@ -501,4 +505,85 @@ func writeError(w http.ResponseWriter, e *query.Error) {
 	w.Header().Set("Content-Type", mimeJSON+"; charset=utf-8")
 	w.WriteHeader(status)
 	w.Write(body)
+}
+
+// stripped applies Accept: ...; nulls=stripped to a response value.
+func stripped(rc *reqCtx, v any) any {
+	if query.StripNullsIn(rc.r.Context()) {
+		return query.StripNulls(v)
+	}
+	return v
+}
+
+// normalizeAccept rewrites PostgREST's own JSON media types in the Accept
+// header: application/vnd.pgrst.array+json is plain JSON (it used to be taken
+// for a custom type and answered with a single raw value), and nulls=stripped
+// on it or on application/vnd.pgrst.object+json asks for null members to be
+// left out. It reports whether nulls should be stripped.
+func normalizeAccept(r *http.Request) bool {
+	accept := r.Header.Get("Accept")
+	if !strings.Contains(accept, "vnd.pgrst.array") && !strings.Contains(accept, "nulls=") {
+		return false
+	}
+	strip := false
+	parts := strings.Split(accept, ",")
+	for i, part := range parts {
+		mt, params := parseAccept(part)
+		switch mt {
+		case "application/vnd.pgrst.array+json", "application/vnd.pgrst.array":
+			parts[i] = mimeJSON
+		case mimeObject:
+			parts[i] = mimeObject
+		default:
+			continue
+		}
+		if strings.EqualFold(params["nulls"], "stripped") {
+			strip = true
+		}
+	}
+	r.Header.Set("Accept", strings.Join(parts, ", "))
+	return strip
+}
+
+// csvRows reads a CSV body (Content-Type: text/csv): a header row of column
+// names, then one row per record, as PostgREST takes bulk inserts. An empty
+// field is NULL; every other value is text, converted to the column's type
+// like a JSON string (binary columns take base64).
+func csvRows(data []byte) ([]map[string]any, error) {
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")) // a UTF-8 byte order mark
+	cr := csv.NewReader(bytes.NewReader(data))
+	cr.ReuseRecord = false
+	header, err := cr.Read()
+	if err != nil {
+		return nil, &query.Error{Status: 400, Code: "FBRST102", Message: "invalid csv body: a header row of column names is required"}
+	}
+	for i, h := range header {
+		header[i] = strings.TrimSpace(h)
+		if header[i] == "" {
+			return nil, &query.Error{Status: 400, Code: "FBRST102", Message: fmt.Sprintf("invalid csv body: column %d of the header has no name", i+1)}
+		}
+	}
+	var rows []map[string]any
+	for line := 2; ; line++ {
+		rec, err := cr.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, &query.Error{Status: 400, Code: "FBRST102", Message: "invalid csv body: " + err.Error()}
+		}
+		m := make(map[string]any, len(header))
+		for i, name := range header {
+			if rec[i] == "" {
+				m[name] = nil
+			} else {
+				m[name] = rec[i]
+			}
+		}
+		rows = append(rows, m)
+	}
+	if len(rows) == 0 {
+		return nil, &query.Error{Status: 400, Code: "FBRST102", Message: "invalid csv body: no rows after the header"}
+	}
+	return rows, nil
 }

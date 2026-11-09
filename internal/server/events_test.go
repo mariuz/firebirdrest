@@ -97,7 +97,8 @@ func TestEvents(t *testing.T) {
 			t.Fatalf("stream: %d %v", status, st.resp.Header)
 		}
 		l := st.waitFor(t, "")
-		if strings.HasPrefix(l, "retry: 3000") {
+		// the whole line: "retry: 30000" is the reply while the hub isn't listening yet
+		if l == "retry: 3000" {
 			st.waitFor(t, ": listening order_placed,stock_changed")
 			break
 		}
@@ -224,7 +225,8 @@ func TestEventResume(t *testing.T) {
 	var st *sseStream
 	for i := 0; ; i++ {
 		st, _ = openStream(t, ts.URL+"/events/stock_changed,order_placed", user)
-		if strings.HasPrefix(st.waitFor(t, ""), "retry: 3000") {
+		// the whole line: "retry: 30000" is the reply while the hub isn't listening yet
+		if st.waitFor(t, "") == "retry: 3000" {
 			break
 		}
 		st.close()

@@ -6,6 +6,15 @@ All notable changes to FirebirdREST are listed here. The project follows
 ## [Unreleased]
 
 ### Added
+- `(any)` and `(all)` filter modifiers, as in PostgREST: `title=like(any).{*dragon*,*sea*}`,
+  `id=not.eq(any).{1,2}`, on `eq`, `neq`, the comparisons, `like`, `ilike`, `similar`,
+  `containing` and `starting`.
+- CSV request bodies (`Content-Type: text/csv`) for inserts: a header row, then one line per row;
+  empty fields are `NULL`.
+- `nulls=stripped` on `application/vnd.pgrst.array+json` and `application/vnd.pgrst.object+json`
+  leaves `null` members out of the response, as supabase-js `.stripNulls()` asks.
+- `jwt-role-claim-key` takes PostgREST's path syntax: array indexes (`realm_access.roles[0]`,
+  `[-1]`) and keys in double quotes (`."https://example.com/role"`).
 - `jwt-iss`: accepted token issuers, comma separated; tokens from other issuers, or without
   one, are refused with `401` ("JWT not from an accepted issuer").
 - `jwt-leeway`: seconds of clock difference tolerated on `exp`, `nbf` and `iat`, up to 300.
@@ -13,6 +22,13 @@ All notable changes to FirebirdREST are listed here. The project follows
   `db-uri` then names only the user. Any character works in the password.
 - A warning at startup and in `-check` when `jwt-jwks-url` is set without `jwt-aud`, which
   would accept tokens the identity provider issued for other applications.
+
+### Fixed
+- `Accept: application/vnd.pgrst.array+json` was taken for a custom media type and answered with
+  one raw value (or `406` for several columns); it is a JSON array now, as in PostgREST.
+- `jwt-role-claim-key` set to a claim name containing dots, such as the documented
+  `https://example.com/role`, never found the claim: it was split at the dots. The whole name is
+  tried first now.
 
 ## [0.8.1] - 2026-11-02
 

@@ -25,6 +25,23 @@ body costs a few round trips instead of 100. Objects in one array may have diffe
 Rows of a view are inserted one by one. If any row fails, the whole request fails and nothing is
 kept.
 
+### CSV
+
+A `text/csv` body inserts its rows, as in PostgREST: a header row of column names, then one
+line per row.
+
+```sh
+curl -X POST localhost:3000/authors -H 'Content-Type: text/csv' --data-binary @- <<'CSV'
+name,country,born
+Ana Blandiana,"Romania, EU",1942-03-25
+Unknown Author,,
+CSV
+```
+
+An empty field is `NULL`; to store an empty string, send JSON. Values are converted to the
+column types like JSON strings: numbers, `true`/`false`, ISO dates; binary columns take base64.
+`Prefer`, `columns=` and `on_conflict=` work as for JSON.
+
 ### Getting the rows back
 
 `Prefer: return=representation` returns the inserted rows, shaped by `select`, with embeds:

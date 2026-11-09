@@ -5,6 +5,15 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- `jwt-iss`: accepted token issuers, comma separated; tokens from other issuers, or without
+  one, are refused with `401` ("JWT not from an accepted issuer").
+- `jwt-leeway`: seconds of clock difference tolerated on `exp`, `nbf` and `iat`, up to 300.
+- `db-password-file`: the database password from a file, for Docker and Kubernetes secrets;
+  `db-uri` then names only the user. Any character works in the password.
+- A warning at startup and in `-check` when `jwt-jwks-url` is set without `jwt-aud`, which
+  would accept tokens the identity provider issued for other applications.
+
 ## [0.8.1] - 2026-11-02
 
 ### Changed

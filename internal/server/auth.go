@@ -38,6 +38,8 @@ func (s *Server) authenticate(rc *reqCtx) error {
 			return jwtError("JWT not valid yet")
 		case errors.Is(err, jwt.ErrTokenInvalidAudience):
 			return jwtError("JWT not in audience")
+		case errors.Is(err, jwt.ErrTokenInvalidIssuer):
+			return jwtError("JWT not from an accepted issuer")
 		}
 		return jwtError(err.Error())
 	}

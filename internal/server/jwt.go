@@ -135,9 +135,25 @@ func (v *jwtVerifier) verify(token string) (jwt.MapClaims, error) {
 	if v.cfg.JWTAudience != "" {
 		opts = append(opts, jwt.WithAudience(v.cfg.JWTAudience))
 	}
+	if v.cfg.JWTLeeway > 0 {
+		opts = append(opts, jwt.WithLeeway(time.Duration(v.cfg.JWTLeeway)*time.Second))
+	}
 	claims := jwt.MapClaims{}
 	if _, err := jwt.ParseWithClaims(token, claims, v.keyFunc, opts...); err != nil {
 		return nil, err
+	}
+	if len(v.cfg.JWTIssuers) > 0 {
+		iss, _ := claims.GetIssuer()
+		ok := false
+		for _, want := range v.cfg.JWTIssuers {
+			if iss == want {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return nil, jwt.ErrTokenInvalidIssuer
+		}
 	}
 	if v.cfg.JWTCacheMaxEntries > 0 {
 		v.store(token, claims)

@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -53,7 +54,9 @@ type Config struct {
 	JWTJWKSRefresh     int    // seconds between fetches of JWTJWKSURL
 	JWTCacheMaxEntries int    // accepted tokens remembered (0 disables the cache)
 	JWTAudience        string
-	JWTRoleClaim       string // dotted path, e.g. "role" or "app_metadata.role"
+	JWTIssuers         []string // accepted iss claims (any when empty)
+	JWTLeeway          int      // seconds of clock skew allowed on exp, nbf and iat
+	JWTRoleClaim       string   // dotted path, e.g. "role" or "app_metadata.role"
 	ServerHost         string
 	ServerPort         int
 	TLSCert            string // PEM certificate (chain) file; with TLSKey, serve HTTPS
@@ -120,6 +123,9 @@ var keys = map[string]string{
 	"jwt-jwks-refresh":            "FBREST_JWT_JWKS_REFRESH",
 	"jwt-cache-max-entries":       "FBREST_JWT_CACHE_MAX_ENTRIES",
 	"jwt-aud":                     "FBREST_JWT_AUD",
+	"jwt-iss":                     "FBREST_JWT_ISS",
+	"jwt-leeway":                  "FBREST_JWT_LEEWAY",
+	"db-password-file":            "FBREST_DB_PASSWORD_FILE",
 	"jwt-role-claim-key":          "FBREST_JWT_ROLE_CLAIM_KEY",
 	"server-host":                 "FBREST_SERVER_HOST",
 	"server-port":                 "FBREST_SERVER_PORT",
@@ -365,6 +371,25 @@ func Load(path string) (*Config, error) {
 	if c.DBURI == "" {
 		return nil, fmt.Errorf("db-uri (FBREST_DB_URI) is required, e.g. user:password@localhost:3050/var/lib/firebird/data/app.fdb")
 	}
+	if pf := strings.TrimSpace(get("FBREST_DB_PASSWORD_FILE", "")); pf != "" {
+		if c.DBURI, err = withPasswordFile(c.DBURI, pf); err != nil {
+			return nil, err
+		}
+	}
+	for _, iss := range strings.Split(get("FBREST_JWT_ISS", ""), ",") {
+		if iss = strings.TrimSpace(iss); iss != "" {
+			c.JWTIssuers = append(c.JWTIssuers, iss)
+		}
+	}
+	if c.JWTLeeway, err = geti("FBREST_JWT_LEEWAY", 0); err != nil {
+		return nil, err
+	}
+	if c.JWTLeeway < 0 || c.JWTLeeway > 300 {
+		return nil, fmt.Errorf("jwt-leeway must be between 0 and 300 seconds, got %d", c.JWTLeeway)
+	}
+	if c.JWTJWKSURL != "" && c.JWTAudience == "" {
+		warnings = append(warnings, "jwt-jwks-url is set without jwt-aud: tokens the provider issued for any other application are accepted too")
+	}
 	if c.JWTSecret == "" && c.JWTJWKSURL == "" && c.DBAnonRole == "" {
 		warnings = append(warnings, "neither jwt-secret, jwt-jwks-url nor db-anon-role is set: every request will be refused")
 	}
@@ -396,4 +421,30 @@ func loopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(strings.Trim(host, "[]"))
 	return ip != nil && ip.IsLoopback()
+}
+
+// withPasswordFile puts the password read from file into dsn, which must
+// name the user but no password: "authenticator@host/db". The password is
+// percent-encoded, since the driver reads the DSN as a URL.
+func withPasswordFile(dsn, file string) (string, error) {
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return "", fmt.Errorf("db-password-file: %w", err)
+	}
+	pass := strings.TrimRight(string(b), "\r\n")
+	if pass == "" {
+		return "", fmt.Errorf("db-password-file: %s is empty", file)
+	}
+	at := strings.Index(dsn, "@")
+	if at <= 0 {
+		return "", fmt.Errorf("db-password-file: db-uri must start with the user name, e.g. authenticator@localhost:3050/data/app.fdb")
+	}
+	user := dsn[:at]
+	if strings.Contains(user, ":") {
+		return "", fmt.Errorf("db-password-file is set but db-uri has a password too; remove it from db-uri")
+	}
+	if u, err := url.PathUnescape(user); err == nil {
+		user = u
+	}
+	return url.UserPassword(user, pass).String() + dsn[at:], nil
 }

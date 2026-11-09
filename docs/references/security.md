@@ -61,6 +61,18 @@ with that `kid` (or without one) are tried; otherwise every key of the right typ
     An `@file` HMAC secret is used byte for byte, including a trailing newline if the file has
     one. Write it with `printf '%s' "$SECRET" > file`, or use base64 and `jwt-secret-is-base64`.
 
+### Audience, issuer and clock skew
+
+- `jwt-aud` accepts only tokens issued for this API. With an identity provider it is the
+  important one: without it, a token the provider issued for any of its other applications is
+  accepted too (FirebirdREST warns when `jwt-jwks-url` is set without it).
+- `jwt-iss` accepts only tokens from the listed issuers, exactly as they appear in the `iss`
+  claim. Use it when the same keys can sign tokens for several tenants or realms, or as a second
+  check next to `jwt-aud`. Several issuers are comma separated.
+- `jwt-leeway` tolerates a small clock difference between the provider and this server, in
+  seconds, when checking `exp`, `nbf` and `iat`. Leave it at 0 when the clocks are synchronized;
+  a few seconds are enough otherwise.
+
 ### Keys from an identity provider
 
 Identity providers such as Auth0, Keycloak, Okta, Azure AD or Google publish their signing keys
@@ -69,6 +81,7 @@ as a JWKS at a URL, and rotate them. Point `jwt-jwks-url` at it:
 ```ini
 jwt-jwks-url = "https://example.eu.auth0.com/.well-known/jwks.json"
 jwt-aud = "https://api.example.com"
+jwt-iss = "https://example.eu.auth0.com/"
 jwt-role-claim-key = "https://example.com/role"
 ```
 

@@ -121,6 +121,21 @@ location /api/ {
 Set `openapi-server-proxy-uri = "https://example.com/api"` so the OpenAPI document shows the public
 URL. `X-Forwarded-For` is available to PSQL as `request.header.x-forwarded-for`.
 
+## Secrets
+
+Keep the database password and the JWT secret out of the configuration file and the
+environment, which other processes and `docker inspect` can read, by reading them from files:
+
+```ini
+db-uri = "authenticator@db.internal:3050/data/app.fdb"
+db-password-file = "/run/secrets/firebird_password"
+jwt-secret = "@/run/secrets/jwt_secret"
+admin-server-token = "@/run/secrets/admin_token"
+```
+
+The password may contain any character; FirebirdREST encodes it for the connection string.
+In Kubernetes, mount a `Secret` as files and point the settings at them.
+
 ## Health checks
 
 With `admin-server-port` set:

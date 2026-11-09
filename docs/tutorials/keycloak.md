@@ -20,12 +20,16 @@ firebirdrest:
     FBREST_JWT_SECRET: ""
     FBREST_JWT_JWKS_URL: http://keycloak:8080/realms/bookstore/protocol/openid-connect/certs
     FBREST_JWT_AUD: firebirdrest
+    FBREST_JWT_ISS: http://localhost:8180/realms/bookstore
 ```
 
 - `jwt-jwks-url` is where Keycloak publishes its signing keys (a JWKS). FirebirdREST fetches it
   at startup, every hour (`jwt-jwks-refresh`), and when a token names a key it hasn't seen.
 - `jwt-aud` accepts only tokens issued *for this API*. Without it, any token from the realm
   would be accepted, including ones meant for other applications.
+- `jwt-iss` accepts only tokens from this realm. Keycloak writes the URL clients reached it at
+  into `iss`, here `http://localhost:8180`; in production set Keycloak's hostname
+  (`KC_HOSTNAME`) so the issuer is the same for every client.
 
 ```sh
 docker compose -f docker-compose.yml -f examples/keycloak/compose.yml up --build -d

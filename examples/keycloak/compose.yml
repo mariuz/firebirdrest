@@ -25,3 +25,5 @@ services:
       FBREST_JWT_JWKS_URL: http://keycloak:8080/realms/bookstore/protocol/openid-connect/certs
       # only tokens issued for this API
       FBREST_JWT_AUD: firebirdrest
+      # ... from this realm: Keycloak names itself with the URL clients reached it at
+      FBREST_JWT_ISS: http://localhost:8180/realms/bookstore

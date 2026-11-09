@@ -23,6 +23,7 @@ jwt-secret = "a long random string of at least 32 characters"
 | Key | Environment | Default | |
 |---|---|---|---|
 | `db-uri` | `FBREST_DB_URI` | (required) | `user:password@host[:port]/path/to/db.fdb[?options]` |
+| `db-password-file` | `FBREST_DB_PASSWORD_FILE` | none | read the database password from this file (a Docker or Kubernetes secret); `db-uri` then names the user without a password: `authenticator@db:3050/data/app.fdb` |
 | `db-anon-role` | `FBREST_DB_ANON_ROLE` | none | role for requests without a JWT; empty means a token is required |
 | `db-pool` | `FBREST_DB_POOL` | `10` | connections per role |
 | `db-max-rows` | `FBREST_DB_MAX_ROWS` | `0` | maximum rows per read (`0` = no limit); also where `Prefer: count=estimated` switches to the estimate (1000 when `0`) |
@@ -73,6 +74,8 @@ Don't add `role=` yourself: FirebirdREST sets the role per request.
 | `jwt-jwks-refresh` | `FBREST_JWT_JWKS_REFRESH` | `3600` | seconds between fetches of `jwt-jwks-url` (minimum 30) |
 | `jwt-cache-max-entries` | `FBREST_JWT_CACHE_MAX_ENTRIES` | `1000` | accepted tokens remembered to skip signature checks; `0` disables the cache |
 | `jwt-aud` | `FBREST_JWT_AUD` | none | required `aud` claim |
+| `jwt-iss` | `FBREST_JWT_ISS` | none | accepted `iss` claims, comma separated; tokens from any other issuer, or without one, are refused |
+| `jwt-leeway` | `FBREST_JWT_LEEWAY` | `0` | seconds of clock difference tolerated on `exp`, `nbf` and `iat` (at most 300) |
 | `jwt-role-claim-key` | `FBREST_JWT_ROLE_CLAIM_KEY` | `role` | claim holding the role; dots for nested claims (`app_metadata.role`) |
 
 ## Server

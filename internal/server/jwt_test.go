@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"log/slog"
 	"math/big"
@@ -306,5 +307,57 @@ func TestJWTCache(t *testing.T) {
 		if _, err := v.verify(bad); err == nil {
 			t.Fatal("bad signature accepted")
 		}
+	}
+}
+
+func TestJWTIssuerAndLeeway(t *testing.T) {
+	const secret = "reallyreallyreallyreallyverysafe1234"
+	sign := func(c jwt.MapClaims) string {
+		s, err := jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString([]byte(secret))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	v, _ := verifier(t, func(c *config.Config) {
+		c.JWTSecret = secret
+		c.JWTIssuers = []string{"https://id.example.com/realms/a", "https://id.example.com/realms/b"}
+		c.JWTCacheMaxEntries = 0 // every token checked afresh
+	})
+	for _, c := range []struct {
+		name   string
+		claims jwt.MapClaims
+		want   error
+	}{
+		{"first issuer", jwt.MapClaims{"iss": "https://id.example.com/realms/a"}, nil},
+		{"second issuer", jwt.MapClaims{"iss": "https://id.example.com/realms/b"}, nil},
+		{"other issuer", jwt.MapClaims{"iss": "https://id.example.com/realms/evil"}, jwt.ErrTokenInvalidIssuer},
+		{"prefix of an issuer", jwt.MapClaims{"iss": "https://id.example.com/realms"}, jwt.ErrTokenInvalidIssuer},
+		{"no issuer", jwt.MapClaims{"role": "web_user"}, jwt.ErrTokenInvalidIssuer},
+	} {
+		_, err := v.verify(sign(c.claims))
+		if (c.want == nil) != (err == nil) || c.want != nil && !errors.Is(err, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, err, c.want)
+		}
+	}
+
+	expired := sign(jwt.MapClaims{"exp": time.Now().Add(-20 * time.Second).Unix()})
+	early := sign(jwt.MapClaims{"nbf": time.Now().Add(20 * time.Second).Unix()})
+	strict, _ := verifier(t, func(c *config.Config) { c.JWTSecret = secret })
+	lenient, _ := verifier(t, func(c *config.Config) { c.JWTSecret = secret; c.JWTLeeway = 30 })
+	if _, err := strict.verify(expired); !errors.Is(err, jwt.ErrTokenExpired) {
+		t.Errorf("expired, no leeway: %v", err)
+	}
+	if _, err := strict.verify(early); !errors.Is(err, jwt.ErrTokenNotValidYet) {
+		t.Errorf("not yet valid, no leeway: %v", err)
+	}
+	if _, err := lenient.verify(expired); err != nil {
+		t.Errorf("expired 20 s ago, 30 s leeway: %v", err)
+	}
+	if _, err := lenient.verify(early); err != nil {
+		t.Errorf("valid in 20 s, 30 s leeway: %v", err)
+	}
+	if _, err := lenient.verify(sign(jwt.MapClaims{"exp": time.Now().Add(-time.Minute).Unix()})); !errors.Is(err, jwt.ErrTokenExpired) {
+		t.Errorf("expired a minute ago, 30 s leeway: %v", err)
 	}
 }

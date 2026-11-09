@@ -63,7 +63,8 @@ FirebirdREST reads the role from one string in the token, at the path in `jwt-ro
 (`role` by default). Keycloak's own realm roles come as a list, `realm_access.roles`; a path
 with an index such as `realm_access.roles[0]` can read from it, but the order of that list isn't
 something to rely on. A user attribute mapped to a `role` claim names exactly one Firebird role
-per user, which is why this tutorial uses one.
+per user, which is why this tutorial uses one. In the admin console these are under
+*Users → ana → Attributes* and *Clients → bookstore-app → Client scopes → bookstore-app-dedicated*.
 
 ## 3. Sign in and call the API
 

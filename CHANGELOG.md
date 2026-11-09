@@ -5,6 +5,8 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-09
+
 ### Added
 - `(any)` and `(all)` filter modifiers, as in PostgREST: `title=like(any).{*dragon*,*sea*}`,
   `id=not.eq(any).{1,2}`, on `eq`, `neq`, the comparisons, `like`, `ilike`, `similar`,
@@ -387,7 +389,8 @@ First release. Supports Firebird 3, 4 and 5.
 - `admin-pprof` serves Go profiling endpoints on the admin port.
 - Release workflow can be started from GitHub (Actions, then Release, then Run workflow).
 
-[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/mariuz/firebirdrest/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/mariuz/firebirdrest/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/mariuz/firebirdrest/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mariuz/firebirdrest/compare/v0.6.0...v0.7.0

@@ -24,6 +24,18 @@ Client code written against the documented API keeps working. If you use
 [firebirdrest-js](https://github.com/mariuz/firebirdrest-js), its suite skips features newer
 than the server, so a newer client works with an older server.
 
+## 0.8.1 → 0.9.0
+
+No behaviour changes for working setups. Two fixes change answers that were wrong before:
+`Accept: application/vnd.pgrst.array+json` returns a JSON array (it returned one raw value), and
+a `jwt-role-claim-key` naming a claim with dots, such as `https://example.com/role`, now finds
+that claim (it found nothing, so those tokens fell back to `db-anon-role`). Check that the role
+such tokens now get is the one intended.
+
+New and optional: `jwt-iss`, `jwt-leeway`, `db-password-file`, `(any)`/`(all)` filter modifiers,
+CSV request bodies, `nulls=stripped`, and array indexes and quoted keys in `jwt-role-claim-key`.
+A new startup warning flags `jwt-jwks-url` without `jwt-aud`.
+
 ## 0.8.0 → 0.8.1
 
 No behaviour changes. Reads with a to-many embed use less memory; embedded rows without an

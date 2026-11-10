@@ -94,6 +94,15 @@ Only with `db-events` set ([realtime events](../api/events.md)).
 | `firebirdrest_event_stream_resets_total` | counter | reset messages sent: streams that may have missed notifications |
 | `firebirdrest_event_subscription_errors_total` | counter | times the subscription to the database was lost and renewed |
 
+### Rate limits
+
+Only with a rate or concurrency limit set ([limits](security.md#rate-and-concurrency-limits)).
+
+| Metric | Type | |
+|---|---|---|
+| `firebirdrest_rate_limited_total{limit}` | counter | requests refused with `429`, by `limit` (`rate`, `concurrency`) |
+| `firebirdrest_rate_limit_clients` | gauge | clients the limiter tracks (seen in the last five minutes) |
+
 ### Process
 
 | Metric | Type | |

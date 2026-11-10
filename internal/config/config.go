@@ -4,6 +4,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -59,15 +60,20 @@ type Config struct {
 	JWTRoleClaim       string   // dotted path, e.g. "role" or "app_metadata.role"
 	ServerHost         string
 	ServerPort         int
-	TLSCert            string // PEM certificate (chain) file; with TLSKey, serve HTTPS
-	TLSKey             string // PEM private key file
-	ServerTimeout      int    // seconds a request may take, including reading its body (0 = no limit)
-	ServerMaxBody      int    // largest request body, in MB
-	AdminHost          string // listen address of the admin server (default 127.0.0.1)
-	AdminToken         string // bearer token for /reload, /metrics and /debug/pprof/ ("" = none)
-	AdminPort          int    // 0 = disabled; serves /live and /ready
-	AdminPprof         bool   // also serve Go profiling endpoints at /debug/pprof/ on the admin port
-	ServerTiming       bool   // add a Server-Timing header to responses
+	TLSCert            string  // PEM certificate (chain) file; with TLSKey, serve HTTPS
+	TLSKey             string  // PEM private key file
+	ServerTimeout      int     // seconds a request may take, including reading its body (0 = no limit)
+	RateLimit          float64 // requests per second per client with a token (0 = none)
+	RateLimitAnon      float64 // requests per second per anonymous client IP (0 = RateLimit)
+	RateBurst          int     // requests above the rate a client may make at once (0 = 2× the rate)
+	MaxConcurrent      int     // requests in progress per client (0 = no limit)
+	ClientIPHeader     string  // header with the client address behind a proxy (X-Real-IP, X-Forwarded-For)
+	ServerMaxBody      int     // largest request body, in MB
+	AdminHost          string  // listen address of the admin server (default 127.0.0.1)
+	AdminToken         string  // bearer token for /reload, /metrics and /debug/pprof/ ("" = none)
+	AdminPort          int     // 0 = disabled; serves /live and /ready
+	AdminPprof         bool    // also serve Go profiling endpoints at /debug/pprof/ on the admin port
+	ServerTiming       bool    // add a Server-Timing header to responses
 	CORSOrigins        string
 	OpenAPIProxyURI    string
 	OpenAPIMode        string // follow-privileges, ignore-privileges or disabled
@@ -111,6 +117,11 @@ var keys = map[string]string{
 	"db-reload-event":             "FBREST_DB_RELOAD_EVENT",
 	"db-events":                   "FBREST_DB_EVENTS",
 	"db-events-roles":             "FBREST_DB_EVENTS_ROLES",
+	"server-rate-limit":           "FBREST_SERVER_RATE_LIMIT",
+	"server-rate-limit-anon":      "FBREST_SERVER_RATE_LIMIT_ANON",
+	"server-rate-burst":           "FBREST_SERVER_RATE_BURST",
+	"server-max-concurrent":       "FBREST_SERVER_MAX_CONCURRENT",
+	"server-client-ip-header":     "FBREST_SERVER_CLIENT_IP_HEADER",
 	"server-tls-cert":             "FBREST_SERVER_TLS_CERT",
 	"server-tls-key":              "FBREST_SERVER_TLS_KEY",
 	"otel-traces-endpoint":        "FBREST_OTEL_TRACES_ENDPOINT",
@@ -314,6 +325,36 @@ func Load(path string) (*Config, error) {
 	}
 	if len(c.DBEventsRoles) > 0 && len(c.DBEvents) == 0 {
 		c.Warnings = append(c.Warnings, "db-events-roles is set but db-events is empty: no event is exposed")
+	}
+	getf := func(env string) (float64, error) {
+		s := strings.TrimSpace(get(env, ""))
+		if s == "" {
+			return 0, nil
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil || f < 0 || math.IsInf(f, 0) || math.IsNaN(f) {
+			return 0, fmt.Errorf("%s must be a number of requests per second, got %q", env, s)
+		}
+		return f, nil
+	}
+	if c.RateLimit, err = getf("FBREST_SERVER_RATE_LIMIT"); err != nil {
+		return nil, err
+	}
+	if c.RateLimitAnon, err = getf("FBREST_SERVER_RATE_LIMIT_ANON"); err != nil {
+		return nil, err
+	}
+	if c.RateBurst, err = geti("FBREST_SERVER_RATE_BURST", 0); err != nil {
+		return nil, err
+	}
+	if c.MaxConcurrent, err = geti("FBREST_SERVER_MAX_CONCURRENT", 0); err != nil {
+		return nil, err
+	}
+	if c.RateBurst < 0 || c.MaxConcurrent < 0 {
+		return nil, fmt.Errorf("server-rate-burst and server-max-concurrent must not be negative")
+	}
+	c.ClientIPHeader = strings.TrimSpace(get("FBREST_SERVER_CLIENT_IP_HEADER", ""))
+	if c.MaxConcurrent > 0 && c.MaxConcurrent >= c.DBPool {
+		c.Warnings = append(c.Warnings, fmt.Sprintf("server-max-concurrent (%d) is not below db-pool (%d): one client can still use every connection", c.MaxConcurrent, c.DBPool))
 	}
 	c.TLSCert = strings.TrimSpace(get("FBREST_SERVER_TLS_CERT", ""))
 	c.TLSKey = strings.TrimSpace(get("FBREST_SERVER_TLS_KEY", ""))

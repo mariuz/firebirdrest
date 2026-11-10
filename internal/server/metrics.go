@@ -258,6 +258,13 @@ func (s *Server) writeMetrics(out io.Writer) {
 	}
 
 	// JWT
+	if l := s.limits; l != nil {
+		head("firebirdrest_rate_limited_total", "counter", "Requests refused with 429, by limit.")
+		fmt.Fprintf(&b, "firebirdrest_rate_limited_total{limit=\"rate\"} %d\n", l.refusedRate.Load())
+		fmt.Fprintf(&b, "firebirdrest_rate_limited_total{limit=\"concurrency\"} %d\n", l.refusedConcurrent.Load())
+		head("firebirdrest_rate_limit_clients", "gauge", "Clients the limiter currently tracks.")
+		fmt.Fprintf(&b, "firebirdrest_rate_limit_clients %d\n", l.size())
+	}
 	if t := s.tracer; t != nil {
 		head("firebirdrest_trace_spans_exported_total", "counter", "Spans exported to the OTLP endpoint.")
 		fmt.Fprintf(&b, "firebirdrest_trace_spans_exported_total %d\n", t.exported.Load())

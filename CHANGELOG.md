@@ -5,6 +5,14 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- Rate and concurrency limits per client, off by default: `server-rate-limit` and
+  `server-rate-limit-anon` (requests per second, a token bucket with `server-rate-burst`),
+  `server-max-concurrent` (requests in progress), and `server-client-ip-header` for the client
+  address behind a proxy. A client is a token's role and `sub`, or an anonymous IP. Refusals get
+  `429` with `Retry-After` and code `FBRST138`, and are counted in `/metrics`
+  ([limits](https://mariuz.github.io/firebirdrest/references/security/#rate-and-concurrency-limits)).
+
 ## [0.9.0] - 2026-11-09
 
 ### Added

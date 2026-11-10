@@ -201,6 +201,7 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST135` | `GET /events/...` while `db-events` is empty (`404`) |
 | `FBRST136` | an event name that isn't in `db-events` (`404`) |
 | `FBRST137` | the role is not in `db-events-roles` (`403`, `401` when anonymous) |
+| `FBRST138` | too many requests from this client (`429`, with `Retry-After`): `server-rate-limit` or `server-max-concurrent` |
 | `FBRST133` | a raw request body (`text/plain`, `application/octet-stream`...) sent to a routine that doesn't have exactly one parameter |
 | `FBRST132` | a query plan was asked for a method without statements (`OPTIONS`) |
 | `FBRST200` | no relationship between the tables |

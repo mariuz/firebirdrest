@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -41,6 +42,7 @@ type Server struct {
 	basep *rolePool
 
 	events *eventHub // nil unless db-events is set
+	limits *limiter  // nil unless a rate or concurrency limit is set
 	tracer *tracer   // nil unless otel-traces-endpoint is set
 }
 
@@ -79,6 +81,14 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, er
 	}
 	if cfg.OTelEndpoint != "" {
 		s.tracer = newTracer(cfg.OTelEndpoint, parseOTLPHeaders(cfg.OTelHeaders), cfg.OTelServiceName, cfg.OTelSampleRatio, log)
+	}
+	s.limits = newLimiter(cfg.RateLimit, cfg.RateLimitAnon, cfg.RateBurst, cfg.MaxConcurrent, cfg.ClientIPHeader)
+	if s.limits != nil {
+		go func() {
+			for range time.Tick(time.Minute) {
+				s.limits.prune()
+			}
+		}()
 	}
 	s.startEvents()
 	return s, nil
@@ -317,7 +327,7 @@ func (s *Server) cors(w http.ResponseWriter, r *http.Request) {
 		h.Set("Access-Control-Allow-Credentials", "true")
 		h.Add("Vary", "Origin")
 	}
-	h.Set("Access-Control-Expose-Headers", "Content-Encoding, Content-Location, Content-Range, Content-Type, Date, Location, Server, Transfer-Encoding, Range-Unit, Preference-Applied, Content-Profile")
+	h.Set("Access-Control-Expose-Headers", "Content-Encoding, Content-Location, Content-Range, Content-Type, Date, Location, Server, Transfer-Encoding, Range-Unit, Preference-Applied, Content-Profile, Retry-After")
 	if r.Method == http.MethodOptions {
 		h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS, HEAD")
 		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Accept-Language, Content-Language, Prefer, Range, Accept-Profile, Content-Profile")
@@ -392,6 +402,19 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 	jsp.finish(time.Now())
 	if sp := spanFrom(r.Context()); sp != nil {
 		sp.set("firebirdrest.role", rc.role)
+	}
+	if s.limits != nil {
+		release, err := s.limits.admit(rc, parts[0] == "events")
+		if err != nil {
+			var le *limitError
+			if errors.As(err, &le) {
+				w.Header().Set("Retry-After", strconv.Itoa(le.retry))
+			}
+			return err
+		}
+		if release != nil {
+			defer release()
+		}
 	}
 	if parts[0] == "events" {
 		if len(parts) != 2 {

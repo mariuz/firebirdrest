@@ -224,6 +224,41 @@ collection. They are recycled after 1000 requests or 5 minutes, and request cont
 set by one request are cleared by the next. `db-read-tx-reuse = false` gives every read its
 own transaction. Query plan requests always use a fresh transaction.
 
+## Rate and concurrency limits
+
+FirebirdREST can limit how much each client may ask, so one caller (or a leaked anonymous
+endpoint) can't occupy every database connection:
+
+```ini
+server-rate-limit = 20          # requests per second for each client with a token
+server-rate-limit-anon = 5      # for each anonymous client IP
+server-rate-burst = 40          # short bursts above the rate (default: twice the rate)
+server-max-concurrent = 4       # requests in progress at once, per client
+```
+
+- A client with a token is its role and `sub` claim, so two users of one role are counted apart.
+  An anonymous client is its IP address.
+- The rate is a token bucket: a client may send `server-rate-burst` requests at once, then
+  `server-rate-limit` per second. Fractions work (`0.5` is one request every two seconds).
+- `server-max-concurrent` caps requests in progress per client; keep it below `db-pool`, or one
+  client can still take every connection (FirebirdREST warns). Event streams don't count, since
+  they stay open; the rate limit still applies when one is opened.
+- A refused request gets `429 Too Many Requests` with `Retry-After` (seconds) and code
+  `FBRST138`. supabase-js and firebirdrest-js report it as an error with that code.
+- Clients idle for five minutes are forgotten, so the table holds only recent ones.
+  `/metrics` counts refusals by limit and the clients tracked.
+
+Behind a reverse proxy every request comes from the proxy's address, so anonymous clients would
+share one limit. Name the header the proxy sets with `server-client-ip-header`: `X-Real-IP`, or
+`X-Forwarded-For`, of which the last entry is read (the one your proxy added; earlier entries
+come from the client and can be forged). Without a proxy, leave it unset: a client could
+otherwise send the header itself and pick its own identity.
+
+These limits work per FirebirdREST instance. With several instances behind a load balancer, each
+counts separately, so a client's effective limit is the per-instance one times the instances it
+reaches; a gateway in front (nginx `limit_req`, a cloud API gateway) is the place for one shared
+limit.
+
 ## Events
 
 `GET /events/<name>` streams Firebird event notifications, which carry only a name and a count.

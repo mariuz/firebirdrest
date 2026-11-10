@@ -37,6 +37,11 @@ jwt-secret = "a long random string of at least 32 characters"
 | `db-prepared-statements-idle` | `FBREST_DB_PREPARED_STATEMENTS_IDLE` | `30` | seconds after which an unused cached statement is closed ([why](schema-cache.md#ddl-and-cached-statements)) |
 | `db-events` | `FBREST_DB_EVENTS` | none | Firebird events clients may listen for at `GET /events/<name>` ([realtime events](../api/events.md)) |
 | `db-events-roles` | `FBREST_DB_EVENTS_ROLES` | none | roles allowed to listen; empty means any authenticated role |
+| `server-rate-limit` | `FBREST_SERVER_RATE_LIMIT` | `0` (off) | requests per second per client with a token (its role and `sub`); fractions allowed ([limits](security.md#rate-and-concurrency-limits)) |
+| `server-rate-limit-anon` | `FBREST_SERVER_RATE_LIMIT_ANON` | `server-rate-limit` | requests per second per anonymous client IP |
+| `server-rate-burst` | `FBREST_SERVER_RATE_BURST` | twice the rate | requests a client may make at once beyond its rate |
+| `server-max-concurrent` | `FBREST_SERVER_MAX_CONCURRENT` | `0` (off) | requests a client may have in progress at once; event streams don't count |
+| `server-client-ip-header` | `FBREST_SERVER_CLIENT_IP_HEADER` | none | behind a proxy, the header with the client address: `X-Real-IP`, or `X-Forwarded-For` (its last entry) |
 | `server-tls-cert` | `FBREST_SERVER_TLS_CERT` | none | PEM certificate (with its chain) to serve HTTPS; reloaded on `SIGHUP` ([TLS](deployment.md#tls)) |
 | `server-tls-key` | `FBREST_SERVER_TLS_KEY` | none | PEM private key of `server-tls-cert`; both or neither |
 | `otel-traces-endpoint` | `FBREST_OTEL_TRACES_ENDPOINT` | none | OTLP/HTTP URL traces are posted to, e.g. `http://collector:4318/v1/traces`; also read from `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` ([traces](observability.md#traces)) |

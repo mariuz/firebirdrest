@@ -24,6 +24,13 @@ Client code written against the documented API keeps working. If you use
 [firebirdrest-js](https://github.com/mariuz/firebirdrest-js), its suite skips features newer
 than the server, so a newer client works with an older server.
 
+## 0.9.0 → 0.10.0
+
+No behaviour changes. New and off by default: rate and concurrency limits per client
+(`server-rate-limit`, `server-rate-limit-anon`, `server-rate-burst`, `server-max-concurrent`,
+and `server-client-ip-header` behind a proxy). Clients that may now receive `429` should honour
+`Retry-After`.
+
 ## 0.8.1 → 0.9.0
 
 No behaviour changes for working setups. Two fixes change answers that were wrong before:

@@ -200,3 +200,13 @@ func TestParseSpread(t *testing.T) {
 		}
 	}
 }
+
+func TestLogicTreeBraces(t *testing.T) {
+	n, err := ParseLogic("or", false, "(authors.name.like(any).{*Lem*,*Guin*},title.eq.x)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.Children) != 2 || n.Children[0].Filter.Field != "authors.name" || len(n.Children[0].Filter.List) != 2 {
+		t.Errorf("%+v", n.Children[0].Filter)
+	}
+}

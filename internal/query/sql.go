@@ -166,6 +166,19 @@ func (b *Builder) writeFilter(n *ReadNode, alias string, f *Filter) error {
 				return b.writeExists(n, alias, ch, !exists)
 			}
 		}
+		// embed.column in a logic tree: true when a related row matches
+		if embed, rest, ok := strings.Cut(f.Field, "."); ok {
+			for _, ch := range n.Children {
+				if ch.Key == embed || ch.Rel != nil && (ch.Rel.Name == embed && ch.Key == ch.Rel.Name) {
+					inner := *f
+					inner.Field = rest
+					return b.writeRelated(n, alias, ch, &inner)
+				}
+			}
+			return &Error{Status: 400, Code: "FBRST204",
+				Message: fmt.Sprintf("%q in a logic tree names no embedded resource of %q", embed, n.Rel.Name),
+				Hint:    fmt.Sprintf("embed it in select, e.g. select=*,%s(*)", embed)}
+		}
 		return &Error{Status: 400, Code: "FBRST204",
 			Message: fmt.Sprintf("column %q does not exist in %q", f.Field, n.Rel.Name)}
 	}
@@ -290,6 +303,41 @@ func (b *Builder) writeExists(parent *ReadNode, palias string, c *ReadNode, nega
 	})
 	b.W(")")
 	return err
+}
+
+// writeRelated writes EXISTS (a related row of c, joined as c is to the
+// parent, for which f holds): a condition on an embedded resource's column
+// inside an or=/and= tree. It is true when some related row matches, for
+// to-one and to-many embeds alike; the embed's own filters don't apply.
+func (b *Builder) writeRelated(parent *ReadNode, palias string, c *ReadNode, f *Filter) error {
+	j := c.Join
+	if j.Kind == Computed {
+		return badRequest("FBRST120", "%q is a computed relationship: its columns can't be used in a logic tree", c.Key)
+	}
+	ca := b.nextAlias()
+	b.W("EXISTS (SELECT 1 FROM ")
+	b.WriteFrom(c, ca)
+	matchAlias := ca
+	if j.Kind == ManyToMany {
+		ja := b.nextAlias()
+		b.W(" JOIN ", j.Junction.SQLName(), " ", ja, " ON ")
+		for i := range j.JChildCols {
+			if i > 0 {
+				b.W(" AND ")
+			}
+			b.W(col(ja, j.JChildCols[i]), " = ", col(ca, j.ChildRef[i]))
+		}
+		matchAlias = ja
+	}
+	b.W(" WHERE ")
+	for i := range j.ParentCols {
+		b.W(col(matchAlias, j.ChildCols[i]), " = ", col(palias, j.ParentCols[i]), " AND ")
+	}
+	if err := b.writeFilter(c, ca, f); err != nil {
+		return err
+	}
+	b.W(")")
+	return nil
 }
 
 // WriteOrder writes ORDER BY when terms are present.

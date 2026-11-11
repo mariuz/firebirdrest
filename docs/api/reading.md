@@ -70,6 +70,19 @@ nest, and `not.` negates a group:
 
 Inside a tree, negate a single condition with `column.not.operator.value`.
 
+A condition can name a column of an embedded resource, `embed.column.operator.value`, to mix
+the parent's columns with related ones, as in PostgREST:
+
+```
+?select=title,authors(name)&or=(authors.name.eq.Stanislaw Lem,title.eq.Small Gods)
+?select=name,books(title)&or=(books.title.eq.Solaris,name.eq.Terry Pratchett)
+?select=email,orders(order_items(qty))&or=(orders.order_items.qty.gt.2)
+```
+
+Such a condition holds when some related row matches (`EXISTS`), for to-one, to-many and
+many-to-many embeds alike, and needs no `!inner`. The embed must be in `select`; its own filters
+(`authors.country=eq.UK`) shape what it shows, not which parents the tree keeps. Paths go as deep
+as the embeds nest.
 ## Ordering
 
 ```

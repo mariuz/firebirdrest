@@ -5,6 +5,18 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- `or`/`and` trees can name columns of embedded resources, as in PostgREST:
+  `or=(authors.name.eq.Stanislaw Lem,title.eq.Small Gods)`, also to-many, many-to-many and
+  nested (`orders.order_items.qty.gt.2`). A condition holds when some related row matches.
+- Views embed like their base tables: a view that exposes all the columns of a base table's
+  foreign key inherits the relationship, in both directions (`books_with_authors?select=tags(name)`,
+  `order_items?select=books_with_authors(title)`). The OpenAPI document marks such keys `viaView`.
+
+### Fixed
+- `(any)`/`(all)` values inside an `or`/`and` tree were split at their commas
+  (`or=(title.like(any).{*a*,*b*})` was refused).
+
 ## [0.10.0] - 2026-11-10
 
 ### Added

@@ -131,6 +131,9 @@ func relationExt(r *schema.Relation, sc *schema.Schema) m {
 		if fk.To.Schema != r.Schema {
 			k["referencedSchema"] = schema.APIName(fk.To.Schema)
 		}
+		if fk.ViaView {
+			k["viaView"] = true // inferred from a view's base table
+		}
 		fks = append(fks, k)
 	}
 	computed := []string{}

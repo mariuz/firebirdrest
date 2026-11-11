@@ -326,8 +326,21 @@ func parseLogic(op string, negate bool, raw string, depth int) (Node, error) {
 		if len(pieces) < 3 {
 			return Node{}, badRequest("FBRST100", "failed to parse logic tree element %q", part)
 		}
-		field := unquote(pieces[0])
-		f, err := ParseFilter(field, part[len(pieces[0])+1:])
+		// the column, possibly of an embedded resource: authors.name.eq.X
+		// names the column name of the embed authors. Segments up to the
+		// operator (or not.) make the path.
+		segs := 1
+		for segs < len(pieces)-1 && !isOperatorToken(pieces[segs]) {
+			segs++
+		}
+		path := make([]string, segs)
+		consumed := 0
+		for i := 0; i < segs; i++ {
+			path[i] = unquote(pieces[i])
+			consumed += len(pieces[i]) + 1
+		}
+		field := strings.Join(path, ".")
+		f, err := ParseFilter(field, part[consumed:])
 		if err != nil {
 			return Node{}, err
 		}
@@ -530,9 +543,9 @@ func splitTop(s string, sep byte) []string {
 		case c == '"':
 			inQ = !inQ
 		case inQ:
-		case c == '(':
+		case c == '(' || c == '{':
 			depth++
-		case c == ')':
+		case c == ')' || c == '}':
 			depth--
 		case c == sep && depth == 0:
 			out = append(out, s[start:i])
@@ -549,4 +562,18 @@ func unquote(s string) string {
 		s = strings.ReplaceAll(s, `\\`, `\`)
 	}
 	return s
+}
+
+// isOperatorToken reports whether a path segment of a logic tree element is
+// where the condition starts: an operator, op(any)/op(all), or not.
+func isOperatorToken(tok string) bool {
+	if tok == "not" || operators[tok] {
+		return true
+	}
+	for _, q := range []string{"(any)", "(all)"} {
+		if base, ok := strings.CutSuffix(tok, q); ok && quantifiable[base] {
+			return true
+		}
+	}
+	return false
 }

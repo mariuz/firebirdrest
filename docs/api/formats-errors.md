@@ -131,7 +131,7 @@ Three `x-firebirdrest` extensions carry what the JSON schemas can't, for tools s
 | Where | Fields |
 |---|---|
 | `info` | `schema` (the one described, `""` before Firebird 6), `schemas` (all exposed, each read with `Accept-Profile`), `firebird` (server version) |
-| each table or view in `components.schemas` | `kind` (`table` or `view`), `primaryKey`, `foreignKeys` (`name`, `columns`, `referencedRelation`, `referencedColumns`, `isOneToOne`, and `referencedSchema` for a key into another schema), `computedFields` (functions usable as columns; `select=*` leaves them out) |
+| each table or view in `components.schemas` | `kind` (`table` or `view`), `primaryKey`, `foreignKeys` (`name`, `columns`, `referencedRelation`, `referencedColumns`, `isOneToOne`, `referencedSchema` for a key into another schema, and `viaView` for a key inferred for a view), `computedFields` (functions usable as columns; `select=*` leaves them out) |
 | each `/rpc/...` path | `kind` (`function`, `selectable`, `executable`), `args` (`name`, `hasDefault`) |
 
 Names are API names, as in URLs. The extensions follow the caller's privileges like the rest of

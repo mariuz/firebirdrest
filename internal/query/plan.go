@@ -391,7 +391,8 @@ func resolveEmbed(s *schema.Schema, parent *ReadNode, item *SelectItem) (*ReadNo
 		// many-to-one: parent holds the FK. Embed by table name or by FK column name.
 		if fk.From == pr {
 			byTable := named(fk.To)
-			byCol := len(fk.FromCols) == 1 && schema.APIName(fk.FromCols[0]) == item.Name
+			// by key column: the base table's key, never one inferred for a view
+			byCol := !fk.ViaView && len(fk.FromCols) == 1 && schema.APIName(fk.FromCols[0]) == item.Name
 			if (byTable && fkMatchesHint(fk, item.Hint)) || (byCol && item.Hint == "") {
 				cands = append(cands, candidate{fk.To, &Join{Kind: ManyToOne, FK: fk,
 					ParentCols: fk.FromCols, ChildCols: fk.ToCols, Single: true}, "many-to-one via " + fk.Name})

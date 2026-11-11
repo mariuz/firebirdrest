@@ -78,6 +78,10 @@ type ForeignKey struct {
 	FromCols []string // DB names
 	To       *Relation
 	ToCols   []string // DB names
+	// ViaView is set on keys inferred for views from their base tables'
+	// keys (see inferViewKeys): embeddable like the others, but never chosen
+	// by a key column name, which keeps meaning the base table.
+	ViaView bool
 }
 
 // Routine kinds.
@@ -572,6 +576,9 @@ ORDER BY rf.RDB$RELATION_NAME, rf.RDB$FIELD_POSITION`, args...)
 	if err := loadConstraints(ctx, db, s, byDB, sc); err != nil {
 		return nil, err
 	}
+	if err := inferViewKeys(ctx, db, s, byDB, sc); err != nil {
+		return nil, err
+	}
 	if err := loadProcedures(ctx, db, s, sc); err != nil {
 		return nil, err
 	}
@@ -882,4 +889,106 @@ WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0
 SELECT COUNT(*) FROM RDB$RELATION_FIELDS
 WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND RDB$DEFAULT_SOURCE CONTAINING 'request.'`).Scan(&n)
 	return err != nil || n > 0
+}
+
+// inferViewKeys gives views the relationships of their base tables, as
+// PostgREST does. Firebird records for each view column the base table
+// (through the view's context) and the base column it comes from; a view
+// that exposes every column of a foreign key of one base table gets that key
+// too, on whichever side the table was: from the view to the referenced
+// table, and from referencing tables to the view. Keys between two views
+// follow from the same rule. Views over views and over procedures, and
+// columns computed by an expression, give nothing.
+func inferViewKeys(ctx context.Context, db *sql.DB, s *Schema, byDB map[string]*Relation, sc scope) error {
+	cond, args := sc.is("rf.RDB$SCHEMA_NAME")
+	rows, err := db.QueryContext(ctx, `
+SELECT rf.RDB$RELATION_NAME, rf.RDB$FIELD_NAME, rf.RDB$BASE_FIELD, rf.RDB$VIEW_CONTEXT, vr.RDB$RELATION_NAME
+FROM RDB$RELATION_FIELDS rf
+JOIN RDB$VIEW_RELATIONS vr ON vr.RDB$VIEW_NAME = rf.RDB$RELATION_NAME AND vr.RDB$VIEW_CONTEXT = rf.RDB$VIEW_CONTEXT`+
+		sc.same("vr.RDB$SCHEMA_NAME", "rf.RDB$SCHEMA_NAME")+sc.same("vr.RDB$RELATION_SCHEMA_NAME", "rf.RDB$SCHEMA_NAME")+`
+WHERE rf.RDB$BASE_FIELD IS NOT NULL`+cond+`
+ORDER BY rf.RDB$RELATION_NAME, rf.RDB$FIELD_POSITION`, args...)
+	if err != nil {
+		return fmt.Errorf("reading view columns: %w", err)
+	}
+	// view -> context -> base column -> view column (the first one exposing it)
+	type vctx struct {
+		view *Relation
+		base *Relation
+		cols map[string]string
+	}
+	contexts := map[string]*vctx{}
+	var order []string
+	for rows.Next() {
+		var view, vcol, bcol, brel sql.NullString
+		var ctxNo int
+		if err := rows.Scan(&view, &vcol, &bcol, &ctxNo, &brel); err != nil {
+			rows.Close()
+			return err
+		}
+		v, b := byDB[trim(view)], byDB[trim(brel)]
+		if v == nil || b == nil || !v.IsView || b.IsView {
+			continue
+		}
+		k := trim(view) + "\x00" + strconv.Itoa(ctxNo)
+		c := contexts[k]
+		if c == nil {
+			c = &vctx{view: v, base: b, cols: map[string]string{}}
+			contexts[k] = c
+			order = append(order, k)
+		}
+		if _, ok := c.cols[trim(bcol)]; !ok {
+			c.cols[trim(bcol)] = trim(vcol)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	type side struct {
+		rel     *Relation
+		cols    []string
+		viaView bool
+	}
+	// the relations a key's end can be: the table itself and every view
+	// context that exposes all of the key's columns of that table
+	ends := func(table *Relation, cols []string) []side {
+		out := []side{{rel: table, cols: cols}}
+		for _, k := range order {
+			c := contexts[k]
+			if c.base != table {
+				continue
+			}
+			mapped := make([]string, len(cols))
+			ok := true
+			for i, col := range cols {
+				if mapped[i], ok = c.cols[col]; !ok {
+					break
+				}
+			}
+			if ok {
+				out = append(out, side{rel: c.view, cols: mapped, viaView: true})
+			}
+		}
+		return out
+	}
+	base := append([]*ForeignKey(nil), s.ForeignKeys...)
+	seen := map[string]bool{}
+	for _, fk := range base {
+		for _, from := range ends(fk.From, fk.FromCols) {
+			for _, to := range ends(fk.To, fk.ToCols) {
+				if !from.viaView && !to.viaView {
+					continue // the key itself
+				}
+				id := fk.DBName + "\x00" + from.rel.DBName + "\x00" + strings.Join(from.cols, ",") + "\x00" + to.rel.DBName + "\x00" + strings.Join(to.cols, ",")
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				s.ForeignKeys = append(s.ForeignKeys, &ForeignKey{Name: fk.Name, DBName: fk.DBName,
+					From: from.rel, FromCols: from.cols, To: to.rel, ToCols: to.cols, ViaView: true})
+			}
+		}
+	}
+	return nil
 }

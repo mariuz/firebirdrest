@@ -33,6 +33,7 @@ func TestOpenAPIExtension(t *testing.T) {
 						ReferencedRelation string   `json:"referencedRelation"`
 						ReferencedColumns  []string `json:"referencedColumns"`
 						IsOneToOne         bool     `json:"isOneToOne"`
+						ViaView            bool     `json:"viaView"`
 					} `json:"foreignKeys"`
 				} `json:"x-firebirdrest"`
 			} `json:"schemas"`
@@ -56,8 +57,17 @@ func TestOpenAPIExtension(t *testing.T) {
 	if !found["label"] || !found["price_with_vat"] || found["similar_books"] {
 		t.Errorf("books computed fields: %v", books.Computed)
 	}
-	if bt := doc.Components.Schemas["book_tags"].Ext; len(bt.ForeignKeys) != 2 || len(bt.PrimaryKey) != 2 {
-		t.Errorf("book_tags: %+v", bt)
+	bt := doc.Components.Schemas["book_tags"].Ext
+	own, toView := 0, false
+	for _, fk := range bt.ForeignKeys {
+		if fk.ViaView {
+			toView = toView || fk.ReferencedRelation == "books_with_authors"
+		} else {
+			own++
+		}
+	}
+	if own != 2 || !toView || len(bt.PrimaryKey) != 2 {
+		t.Errorf("book_tags: its two keys, plus one inferred to the view: %+v", bt)
 	}
 	if v := doc.Components.Schemas["books_with_authors"].Ext; v.Kind != "view" {
 		t.Errorf("view kind: %+v", v)

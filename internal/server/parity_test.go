@@ -175,3 +175,90 @@ func TestPostgRESTParity(t *testing.T) {
 		t.Errorf("role from realm_access.roles[0]: %d %s", r.status, r.body)
 	}
 }
+
+func TestLogicTreesAcrossEmbeds(t *testing.T) {
+	ts := testServer(t)
+	user := "Bearer " + token(t, jwt.MapClaims{"role": "web_user"})
+	get := func(path string, auth ...string) resp {
+		t.Helper()
+		h := []string{}
+		if len(auth) > 0 {
+			h = []string{"Authorization", auth[0]}
+		}
+		return do(t, ts, "GET", path, "", h...)
+	}
+	// to-one: a book whose author matches, or whose title does
+	jsonEq(t, get("/books?select=title,authors(name)&or=(authors.name.eq.Stanislaw%20Lem,title.eq.Small%20Gods)&order=id").body,
+		`[{"title":"Small Gods","authors":{"name":"Terry Pratchett"}},{"title":"Solaris","authors":{"name":"Stanislaw Lem"}}]`)
+	// to-many: an author with some matching book; the embed still shows all their books
+	jsonEq(t, get("/authors?select=name,books(title)&or=(books.title.eq.Solaris,name.eq.Terry%20Pratchett)&order=id").body,
+		`[{"name":"Terry Pratchett","books":[{"title":"Guards! Guards!"},{"title":"Small Gods"}]},{"name":"Stanislaw Lem","books":[{"title":"Solaris"}]}]`)
+	// many-to-many through the junction, and an and= tree
+	if r := get("/books?select=title,tags(name)&or=(tags.name.eq.humour)&order=id"); !strings.Contains(r.body, "Guards! Guards!") || strings.Contains(r.body, "Solaris") {
+		t.Errorf("many-to-many: %s", r.body)
+	}
+	if r := get("/books?select=title,authors(country)&and=(authors.country.eq.UK,price.lt.9)"); r.body != `[{"title":"Small Gods","authors":{"country":"UK"}}]` {
+		t.Errorf("and=: %s", r.body)
+	}
+	// negation inside the embed's condition, and the modifiers
+	if r := get("/books?select=title,authors(name)&or=(authors.name.not.eq.Terry%20Pratchett)&order=id"); strings.Contains(r.body, "Pratchett") || !strings.Contains(r.body, "Solaris") {
+		t.Errorf("not inside: %s", r.body)
+	}
+	if r := get("/books?select=title,authors(name)&or=(authors.name.like(any).{*Lem*,*Guin*})&order=id"); !strings.Contains(r.body, "Solaris") || !strings.Contains(r.body, "Dispossessed") || strings.Contains(r.body, "Pratchett") {
+		t.Errorf("like(any) in an embed: %s", r.body)
+	}
+	// two levels: customers with an order line of more than 2 copies
+	r := get("/customers?select=email,orders(order_items(qty))&or=(orders.order_items.qty.gt.2)", user)
+	if r.status != 200 {
+		t.Fatalf("nested path: %d %s", r.status, r.body)
+	}
+	var custs []struct {
+		Orders []struct {
+			OrderItems []struct{ Qty int } `json:"order_items"`
+		}
+	}
+	json.Unmarshal([]byte(r.body), &custs)
+	for _, c := range custs {
+		big := false
+		for _, o := range c.Orders {
+			for _, it := range o.OrderItems {
+				big = big || it.Qty > 2
+			}
+		}
+		if !big {
+			t.Errorf("nested path let a customer through without such a line: %s", r.body)
+		}
+	}
+	// the embed must be selected; the column must exist
+	if r := get("/books?select=title&or=(authors.name.eq.x)"); r.status != 400 || !strings.Contains(r.body, "embed it in select") {
+		t.Errorf("embed not selected: %d %s", r.status, r.body)
+	}
+	if r := get("/books?select=title,authors(name)&or=(authors.nope.eq.x)"); r.status != 400 || !strings.Contains(r.body, "FBRST204") {
+		t.Errorf("unknown column of the embed: %d %s", r.status, r.body)
+	}
+}
+
+func TestViewEmbedding(t *testing.T) {
+	ts := testServer(t)
+	user := "Bearer " + token(t, jwt.MapClaims{"role": "web_user"})
+	// books_with_authors exposes books.id: it inherits the keys into books
+	jsonEq(t, do(t, ts, "GET", "/books_with_authors?select=title,tags(name),covers(mime)&id=eq.1", "").body,
+		`[{"title":"Guards! Guards!","tags":[{"name":"fantasy"},{"name":"humour"}],"covers":{"mime":"image/png"}}]`)
+	// and the other direction: from a referencing table to the view
+	r := do(t, ts, "GET", "/order_items?select=qty,books_with_authors(title)&order=order_id&limit=1", "", "Authorization", user)
+	if r.status != 200 || !strings.Contains(r.body, `"books_with_authors":{"title":`) {
+		t.Errorf("to the view: %d %s", r.status, r.body)
+	}
+	// filters and logic trees work through the inferred key too
+	if r := do(t, ts, "GET", "/books_with_authors?select=title,tags!inner(name)&tags.name=eq.humour&order=id", ""); r.status != 200 || strings.Contains(r.body, "Solaris") || !strings.Contains(r.body, "Small Gods") {
+		t.Errorf("!inner through the view: %d %s", r.status, r.body)
+	}
+	// it doesn't expose authors.id or books.author_id: no relationship to authors
+	if r := do(t, ts, "GET", "/books_with_authors?select=title,authors(name)", ""); r.status != 400 || !strings.Contains(r.body, "FBRST200") {
+		t.Errorf("no key, no relationship: %d %s", r.status, r.body)
+	}
+	// a key column keeps naming the base table, not the view as well
+	if r := do(t, ts, "GET", "/book_tags?select=book_id(title)&book_id=eq.1&limit=1", "", "Authorization", user); r.status != 200 || !strings.Contains(r.body, "Guards") {
+		t.Errorf("embedding by key column after inference: %d %s", r.status, r.body)
+	}
+}

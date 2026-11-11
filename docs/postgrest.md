@@ -11,7 +11,9 @@ list below.
 
 - `select` with aliases, casts, embedding, `!hint`, `!inner`, spread (`...`) and aggregates.
 - Filters `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `in`, `is`, `isdistinct`,
-  `not.`, the `(any)`/`(all)` modifiers, and `or`/`and` trees.
+  `not.`, the `(any)`/`(all)` modifiers, and `or`/`and` trees, including embedded columns
+  (`or=(authors.name.eq.X,title.eq.Y)`).
+- Embedding through views, with relationships inferred from their base tables.
 - `order` (including `order=embed(column)` on to-one embeds), `limit`, `offset`, `Range`,
   `Prefer: count=exact`, `count=planned` and `count=estimated`.
 - `POST`/`PATCH`/`PUT`/`DELETE` (`PATCH`/`DELETE` with `order` and `limit`), `Prefer: return=…`,
@@ -65,8 +67,6 @@ list below.
 
 PostgREST features FirebirdREST doesn't have yet, all on the roadmap:
 
-- `or`/`and` trees that mix embedded columns with the table's own (`or=(authors.name.eq.X,title.eq.Y)`).
-- Embedding through views: PostgREST infers a view's relationships from its base tables.
 - Status and headers set from SQL (`response.status`, `response.headers`).
 - `server-trace-header`, `server-unix-socket`, `db-pool-acquisition-timeout`,
   `db-pool-max-lifetime`, `db-tx-end`, `db-root-spec`, `--dump-config`, `--dump-schema`, and

@@ -21,6 +21,19 @@ GET /books?select=title,tags(name)                 # many-to-many: an array
 keys to both sides, like `book_tags (book_id, tag_id)`. A one-to-many relationship whose foreign
 key is also the child's primary key is treated as **one-to-one** and returns an object.
 
+**Views** embed like the tables they read from. Firebird records which base table and column
+each view column comes from, so a view that exposes all the columns of a foreign key of one of
+its base tables has that relationship too, in both directions:
+
+```
+GET /books_with_authors?select=title,tags(name),covers(mime)   # the view exposes books.id
+GET /order_items?select=qty,books_with_authors(title)
+```
+
+`books_with_authors` exposes `books.id` but not `books.author_id`, so it has no relationship to
+`authors`. Columns computed by an expression, views over other views, and views over procedures
+give no relationships. Embedding by a key column (`book_id(...)`) keeps naming the base table.
+
 Embeds nest to any depth:
 
 ```
@@ -73,6 +86,13 @@ GET /authors?select=name,books(title)&books=not.is.null
 
 These turn into `EXISTS (...)` conditions on the parent query, so they also work with `limit`,
 `order` and `Prefer: count=exact`.
+
+To combine such conditions with others, or with each other, use an `or`/`and` tree with
+`embed.column` conditions ([logic trees](reading.md#logic-trees)):
+
+```
+GET /books?select=title,authors(name),tags(name)&or=(authors.country.eq.Poland,tags.name.eq.humour)
+```
 
 ## Spread
 

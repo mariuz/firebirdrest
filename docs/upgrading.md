@@ -24,6 +24,13 @@ Client code written against the documented API keeps working. If you use
 [firebirdrest-js](https://github.com/mariuz/firebirdrest-js), its suite skips features newer
 than the server, so a newer client works with an older server.
 
+## 0.10.0 → 0.11.0
+
+No behaviour changes for existing requests. Views now have the relationships of their base
+tables, so the OpenAPI document lists more `foreignKeys` (marked `viaView`); regenerate typed
+clients (`firebirdrest-js gen types`) to embed through views. `or`/`and` trees accept embedded
+columns (`authors.name.eq.X`), which were refused before.
+
 ## 0.9.0 → 0.10.0
 
 No behaviour changes. New and off by default: rate and concurrency limits per client

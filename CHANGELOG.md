@@ -5,6 +5,8 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-12
+
 ### Added
 - `or`/`and` trees can name columns of embedded resources, as in PostgREST:
   `or=(authors.name.eq.Stanislaw Lem,title.eq.Small Gods)`, also to-many, many-to-many and
@@ -411,7 +413,8 @@ First release. Supports Firebird 3, 4 and 5.
 - `admin-pprof` serves Go profiling endpoints on the admin port.
 - Release workflow can be started from GitHub (Actions, then Release, then Run workflow).
 
-[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/mariuz/firebirdrest/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/mariuz/firebirdrest/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/mariuz/firebirdrest/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/mariuz/firebirdrest/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/mariuz/firebirdrest/compare/v0.8.0...v0.8.1

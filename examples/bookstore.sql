@@ -127,6 +127,57 @@ BEGIN
   INSERT INTO api_log (payload) VALUES (:payload) RETURNING id INTO :id;
 END^
 
+-- sets the response status and headers from SQL (PostgREST's response.status and
+-- response.headers): POST /rpc/set_response
+--   {"status_code": 201, "headers": "[{\"Location\": \"/books?id=eq.1\"}]"}
+-- A context variable holds 255 characters; longer headers continue in
+-- response.headers.2, response.headers.3, ... as this loop does.
+CREATE PROCEDURE set_response (status_code INTEGER = NULL, headers VARCHAR(4000) = NULL)
+AS
+DECLARE r INTEGER;
+DECLARE i INTEGER = 1;
+DECLARE pos INTEGER = 1;
+BEGIN
+  IF (status_code IS NOT NULL) THEN
+    r = RDB$SET_CONTEXT('USER_TRANSACTION', 'response.status', status_code);
+  WHILE (pos <= CHAR_LENGTH(headers)) DO
+  BEGIN
+    r = RDB$SET_CONTEXT('USER_TRANSACTION', IIF(i = 1, 'response.headers', 'response.headers.' || i),
+                        SUBSTRING(headers FROM pos FOR 255));
+    pos = pos + 255;
+    i = i + 1;
+  END
+END^
+
+-- answers 201 Created with a Location header, through set_response:
+-- POST /rpc/add_author {"name": "Iain M. Banks", "country": "UK"}
+CREATE PROCEDURE add_author (name VARCHAR(100), country VARCHAR(60) = NULL)
+RETURNS (id INTEGER)
+AS
+BEGIN
+  INSERT INTO authors (name, country) VALUES (:name, :country) RETURNING id INTO :id;
+  EXECUTE PROCEDURE set_response(201, '[{"Location": "/authors?id=eq.' || id || '"}]');
+END^
+
+-- a list that may be cached: GET /rpc/cached_titles answers with Cache-Control
+CREATE PROCEDURE cached_titles
+RETURNS (title TYPE OF COLUMN books.title)
+AS
+DECLARE r INTEGER;
+BEGIN
+  r = RDB$SET_CONTEXT('USER_TRANSACTION', 'response.headers', '[{"Cache-Control": "public, max-age=300"}]');
+  FOR SELECT title FROM books ORDER BY id INTO :title DO
+    SUSPEND;
+END^
+
+-- a hand-written API description for GET / (db-root-spec = "root_spec")
+CREATE FUNCTION root_spec
+RETURNS BLOB SUB_TYPE TEXT
+AS
+BEGIN
+  RETURN '{"openapi": "3.0.3", "info": {"title": "Bookstore", "version": "1"}, "paths": {}}';
+END^
+
 -- POST /rpc/blob_size with a raw body (Content-Type: application/octet-stream)
 CREATE FUNCTION blob_size (data BLOB SUB_TYPE BINARY)
 RETURNS INTEGER
@@ -276,6 +327,8 @@ GRANT EXECUTE ON PROCEDURE similar_books TO ROLE web_anon;
 GRANT EXECUTE ON PROCEDURE author_stats TO ROLE web_anon;
 GRANT EXECUTE ON FUNCTION price_with_vat TO ROLE web_anon;
 GRANT EXECUTE ON FUNCTION label TO ROLE web_anon;
+GRANT EXECUTE ON PROCEDURE cached_titles TO ROLE web_anon;
+GRANT EXECUTE ON FUNCTION root_spec TO ROLE web_anon;
 
 GRANT ALL ON authors TO ROLE web_user;
 GRANT ALL ON books TO ROLE web_user;
@@ -297,6 +350,12 @@ GRANT EXECUTE ON PROCEDURE similar_books TO ROLE web_user;
 GRANT EXECUTE ON PROCEDURE author_stats TO ROLE web_user;
 GRANT EXECUTE ON FUNCTION price_with_vat TO ROLE web_user;
 GRANT EXECUTE ON FUNCTION label TO ROLE web_user;
+GRANT EXECUTE ON PROCEDURE set_response TO ROLE web_user;
+GRANT EXECUTE ON PROCEDURE add_author TO ROLE web_user;
+GRANT EXECUTE ON PROCEDURE set_response TO PROCEDURE add_author;
+GRANT INSERT ON authors TO PROCEDURE add_author;
+GRANT EXECUTE ON PROCEDURE cached_titles TO ROLE web_user;
+GRANT EXECUTE ON FUNCTION root_spec TO ROLE web_user;
 GRANT SELECT ON books TO PACKAGE catalog;
 GRANT SELECT ON books TO PROCEDURE similar_books;
 GRANT SELECT ON books TO PROCEDURE author_stats;

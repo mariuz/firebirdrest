@@ -121,6 +121,25 @@ location /api/ {
 Set `openapi-server-proxy-uri = "https://example.com/api"` so the OpenAPI document shows the public
 URL. `X-Forwarded-For` is available to PSQL as `request.header.x-forwarded-for`.
 
+On the same machine, the proxy can reach FirebirdREST through a Unix socket instead of a TCP
+port. Then no other host can connect, and file permissions decide who may:
+
+```ini
+server-unix-socket = "/run/firebirdrest/api.sock"
+server-unix-socket-mode = "660"   # owner and group: add the proxy's user to the group
+```
+
+```nginx
+location /api/ {
+    proxy_pass http://unix:/run/firebirdrest/api.sock:/;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+A socket file left by an earlier run is replaced at startup. With rate limits, set
+`server-client-ip-header = "X-Real-IP"`. Connections over the socket carry no client address,
+so without that header every client counts as the same one.
+
 ## Secrets
 
 Keep the database password and the JWT secret out of the configuration file and the

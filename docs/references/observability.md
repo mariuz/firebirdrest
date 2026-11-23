@@ -211,3 +211,22 @@ time=2026-10-20T18:12:01.123Z level=INFO msg=request method=GET path=/books stat
 ```
 
 `log-level = warn` keeps only problems, such as a failed schema reload or JWKS fetch.
+
+With `server-trace-header = "X-Request-Id"`, the value of that request header is copied into the
+response and added to the request's log line. With tracing on, it also becomes an attribute of
+the request span. A proxy or client can then follow one request through its own logs and
+FirebirdREST's:
+
+```text
+time=... level=INFO msg=request method=GET path=/books status=200 took=1.84ms x-request-id=4f1c2a
+```
+
+`log-query = all` also logs the text of every SQL statement, with the request's role. Parameter
+values are not logged, so data from requests stays out of the log:
+
+```text
+time=... level=INFO msg=query role=web_anon sql="SELECT t0.\"TITLE\" FROM \"BOOKS\" t0 WHERE ((t0.\"ID\" = ?))"
+```
+
+It logs a line per statement and is meant for debugging; traces give the same statements with
+their durations.

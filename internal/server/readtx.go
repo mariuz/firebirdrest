@@ -44,7 +44,7 @@ type readTxPool struct {
 }
 
 // acquire returns an idle read transaction, or starts one.
-func (p *rolePool) acquireRead(ctx context.Context) (*readTx, error) {
+func (p *rolePool) acquireRead(ctx context.Context, timeout int) (*readTx, error) {
 	p.reads.mu.Lock()
 	if n := len(p.reads.idle); n > 0 {
 		rt := p.reads.idle[n-1]
@@ -53,7 +53,7 @@ func (p *rolePool) acquireRead(ctx context.Context) (*readTx, error) {
 		return rt, nil
 	}
 	p.reads.mu.Unlock()
-	conn, err := p.db.Conn(ctx)
+	conn, err := acquire(ctx, p.db, timeout)
 	if err != nil {
 		return nil, err
 	}

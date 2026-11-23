@@ -26,8 +26,13 @@ jwt-secret = "a long random string of at least 32 characters"
 | `db-password-file` | `FBREST_DB_PASSWORD_FILE` | none | read the database password from this file (a Docker or Kubernetes secret); `db-uri` then names the user without a password: `authenticator@db:3050/data/app.fdb` |
 | `db-anon-role` | `FBREST_DB_ANON_ROLE` | none | role for requests without a JWT; empty means a token is required |
 | `db-pool` | `FBREST_DB_POOL` | `10` | connections per role |
+| `db-pool-acquisition-timeout` | `FBREST_DB_POOL_ACQUISITION_TIMEOUT` | `10` | seconds a request waits for a free connection before `504` (`FBRST003`); `0` waits up to `server-request-timeout` |
+| `db-pool-max-lifetime` | `FBREST_DB_POOL_MAX_LIFETIME` | `1800` | seconds after which a connection is closed and replaced, once it is back in the pool; `0` keeps it |
+| `db-pool-max-idletime` | `FBREST_DB_POOL_MAX_IDLETIME` | `300` | seconds an unused connection stays open; `0` keeps it |
 | `db-max-rows` | `FBREST_DB_MAX_ROWS` | `0` | maximum rows per read (`0` = no limit); also where `Prefer: count=estimated` switches to the estimate (1000 when `0`) |
 | `db-pre-request` | `FBREST_DB_PRE_REQUEST` | none | executable procedure run at the start of each request (`proc` or `schema.proc`) |
+| `db-tx-end` | `FBREST_DB_TX_END` | `commit-allow-override` | how transactions end: `commit`, `commit-allow-override`, `rollback` or `rollback-allow-override`; only the `-allow-override` modes honour `Prefer: tx=` ([details](security.md#transactions)) |
+| `db-root-spec` | `FBREST_DB_ROOT_SPEC` | none | a function or procedure whose result answers `GET /` instead of the generated OpenAPI document |
 | `db-safe-updates` | `FBREST_DB_SAFE_UPDATES` | `true` | refuse `PATCH`/`DELETE` without filters or `limit` |
 | `db-aggregates-enabled` | `FBREST_DB_AGGREGATES_ENABLED` | `true` | allow `count()`, `sum()`, … |
 | `db-plan-enabled` | `FBREST_DB_PLAN_ENABLED` | `false` | allow `Accept: application/vnd.pgrst.plan` ([query plans](../api/formats-errors.md#query-plans)) |
@@ -89,6 +94,9 @@ Don't add `role=` yourself: FirebirdREST sets the role per request.
 |---|---|---|---|
 | `server-host` | `FBREST_SERVER_HOST` | `0.0.0.0` | listen address |
 | `server-port` | `FBREST_SERVER_PORT` | `3000` | API port |
+| `server-unix-socket` | `FBREST_SERVER_UNIX_SOCKET` | none | serve on this Unix socket instead of `server-host` and `server-port` ([behind a proxy](deployment.md#behind-a-reverse-proxy)) |
+| `server-unix-socket-mode` | `FBREST_SERVER_UNIX_SOCKET_MODE` | `660` | permissions of the socket file, in octal |
+| `server-trace-header` | `FBREST_SERVER_TRACE_HEADER` | none | a request header such as `X-Request-Id`, copied into the response and the request log, and visible to PSQL as `request.header.<name>` ([logs](observability.md#logs)) |
 | `server-request-timeout` | `FBREST_SERVER_REQUEST_TIMEOUT` | `60` | seconds a request may take to arrive and to be handled; `0` disables ([details](security.md#request-limits)) |
 | `server-max-body-size` | `FBREST_SERVER_MAX_BODY_SIZE` | `16` | largest request body, in MB (`413` above it) |
 | `server-cors-allowed-origins` | `FBREST_SERVER_CORS_ALLOWED_ORIGINS` | `*` | comma-separated origins allowed by CORS; `*` allows any origin without credentials; empty disables CORS headers |
@@ -100,6 +108,7 @@ Don't add `role=` yourself: FirebirdREST sets the role per request.
 | `admin-server-token` | `FBREST_ADMIN_SERVER_TOKEN` | none | bearer token required by `/reload`, `/metrics` and `/debug/pprof/`; at least 16 characters, or `@/path/to/file` |
 | `admin-pprof` | `FBREST_ADMIN_PPROF` | `false` | serve Go profiling at `/debug/pprof/` on the admin port |
 | `log-level` | `FBREST_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; `info` logs every request |
+| `log-query` | `FBREST_LOG_QUERY` | `disabled` | `all` logs the SQL text of every statement, without its parameter values ([logs](observability.md#logs)) |
 
 The admin server listens on `127.0.0.1` by default, so only the same machine reaches it. To reach
 it from elsewhere (a Prometheus server, a load balancer's health check, Kubernetes probes), set
@@ -116,12 +125,26 @@ Boolean settings left empty in the config file (`admin-pprof =`) keep their defa
 firebirdrest [config-file]
 firebirdrest -version
 firebirdrest -check [config-file]
+firebirdrest -dump-config [config-file]
+firebirdrest -dump-schema [config-file]
 ```
 
 `-check` loads the configuration, prints warnings (deprecated settings, a short `jwt-secret`,
 the CORS wildcard, no way to authenticate) and exits with status 0, or with status 2 and the
 error when a setting is unknown or invalid. Nothing is connected. Use it before a rollout; see
 [Upgrading](../upgrading.md). The same warnings are logged at startup.
+
+`-dump-config` prints every setting in use, defaults included, as a config file sorted by key.
+The output combines the file and the environment, so it shows what a running server would see.
+`jwt-secret`, `admin-server-token` and the password in `db-uri` are shown as `***`.
+
+`-dump-schema` connects, loads the schema cache and prints it as JSON:
+- relations with their columns, keys and computed fields
+- foreign keys, including those inferred for views
+- routines
+- which objects may set `response.*`
+
+Use it to see what FirebirdREST found in a database, or to compare two databases.
 
 FirebirdREST retries the database connection with back-off until it succeeds, so it can start
 before Firebird. It stops gracefully on `SIGINT`/`SIGTERM` and reloads the schema cache on

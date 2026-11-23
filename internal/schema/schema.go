@@ -48,6 +48,9 @@ type Relation struct {
 	// Computed lists routines whose inputs are all TYPE OF COLUMN this relation:
 	// functions are computed fields, procedures are computed relationships.
 	Computed []*Routine
+	// SetsResponse: a request on this relation may set response.* (see
+	// ResponseSetters).
+	SetsResponse bool
 }
 
 // Keys returns the foreign keys of the relation's schema: those between its
@@ -105,6 +108,8 @@ type Routine struct {
 	// ParentCols are those columns in parameter order.
 	Parent     *Relation
 	ParentCols []string
+	// SetsResponse: calling the routine may set response.*.
+	SetsResponse bool
 }
 
 // Schema is the cached view of one SQL schema of the database (the whole
@@ -120,6 +125,12 @@ type Schema struct {
 	// computed/default expression mentions "request." (or its source is not
 	// readable), so the request.* context variables must be set.
 	UsesRequestContext bool
+	// SetsResponse is true when some object mentions "response." (or its
+	// source is not readable). Which requests then read the response.status
+	// and response.headers context variables is decided per relation and
+	// routine (their SetsResponse) and by Response.
+	SetsResponse bool
+	Response     *ResponseSetters
 }
 
 var plainIdent = regexp.MustCompile(`^[A-Z][A-Z0-9_$]*$`)
@@ -354,7 +365,12 @@ func LoadCatalog(ctx context.Context, db *sql.DB, names []string) (*Catalog, err
 		`SELECT RDB$GET_CONTEXT('SYSTEM','ENGINE_VERSION') FROM RDB$DATABASE`).Scan(&c.Version); err != nil {
 		return nil, fmt.Errorf("reading the engine version: %w", err)
 	}
-	usesCtx := usesRequestContext(ctx, db)
+	usesCtx := mentions(ctx, db, "request.")
+	var resp *ResponseSetters
+	if mentions(ctx, db, "response.") {
+		resp = responseSetters(ctx, db)
+	}
+	setsResp := resp != nil
 	if MajorVersion(c.Version) < 6 {
 		if len(names) > 0 {
 			return nil, fmt.Errorf("db-schemas needs Firebird 6 or later; this server is Firebird %s, which has no schemas", c.Version)
@@ -363,8 +379,9 @@ func LoadCatalog(ctx context.Context, db *sql.DB, names []string) (*Catalog, err
 		if err != nil {
 			return nil, err
 		}
-		s.UsesRequestContext = usesCtx
+		s.UsesRequestContext, s.SetsResponse = usesCtx, setsResp
 		c.Schemas = []*Schema{s}
+		c.markResponse(resp)
 		return c, nil
 	}
 	if len(names) == 0 {
@@ -407,12 +424,13 @@ func LoadCatalog(ctx context.Context, db *sql.DB, names []string) (*Catalog, err
 		if err != nil {
 			return nil, fmt.Errorf("schema %s: %w", dbName, err)
 		}
-		s.UsesRequestContext = usesCtx
+		s.UsesRequestContext, s.SetsResponse = usesCtx, setsResp
 		c.Schemas = append(c.Schemas, s)
 	}
 	if err := linkCrossSchemaKeys(ctx, db, c); err != nil {
 		return nil, err
 	}
+	c.markResponse(resp)
 	return c, nil
 }
 
@@ -853,10 +871,11 @@ func linkComputed(s *Schema, byDB map[string]*Relation) {
 	}
 }
 
-// usesRequestContext looks for "request." in every piece of PSQL and every
-// expression stored in the database. Missing source (stripped metadata) counts
-// as a use, so the variables are only skipped when that is provably safe.
-func usesRequestContext(ctx context.Context, db *sql.DB) bool {
+// mentions looks for needle ("request.", "response.") in every piece of PSQL
+// and every expression stored in the database. Missing source (stripped
+// metadata) counts as a mention, so the context variables are only skipped
+// when that is provably safe.
+func mentions(ctx context.Context, db *sql.DB, needle string) bool {
 	var n int
 	err := db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM (
@@ -873,21 +892,21 @@ SELECT COUNT(*) FROM (
   UNION ALL
   SELECT RDB$PACKAGE_BODY_SOURCE FROM RDB$PACKAGES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0
 ) x
-WHERE x.src IS NULL OR x.src CONTAINING 'request.'`).Scan(&n)
+WHERE x.src IS NULL OR x.src CONTAINING ?`, needle).Scan(&n)
 	if err != nil || n > 0 {
 		return true
 	}
 	err = db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM RDB$FIELDS
 WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0
-  AND (RDB$COMPUTED_SOURCE CONTAINING 'request.' OR RDB$DEFAULT_SOURCE CONTAINING 'request.'
-       OR RDB$VALIDATION_SOURCE CONTAINING 'request.')`).Scan(&n)
+  AND (RDB$COMPUTED_SOURCE CONTAINING ? OR RDB$DEFAULT_SOURCE CONTAINING ?
+       OR RDB$VALIDATION_SOURCE CONTAINING ?)`, needle, needle, needle).Scan(&n)
 	if err != nil || n > 0 {
 		return true
 	}
 	err = db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM RDB$RELATION_FIELDS
-WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND RDB$DEFAULT_SOURCE CONTAINING 'request.'`).Scan(&n)
+WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND RDB$DEFAULT_SOURCE CONTAINING ?`, needle).Scan(&n)
 	return err != nil || n > 0
 }
 

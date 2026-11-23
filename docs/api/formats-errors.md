@@ -173,6 +173,7 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST000` | unexpected server error (see the log) |
 | `FBRST001` | the database can't be reached (`503`) |
 | `FBRST002` | the request took longer than `server-request-timeout` (`503`) |
+| `FBRST003` | no database connection became free within `db-pool-acquisition-timeout` (`504`) |
 | `FBRST100` | filter syntax or unknown operator |
 | `FBRST101` | `order` syntax |
 | `FBRST102` | invalid body or parameter value |
@@ -202,6 +203,9 @@ Errors are JSON objects in PostgREST's shape:
 | `FBRST136` | an event name that isn't in `db-events` (`404`) |
 | `FBRST137` | the role is not in `db-events-roles` (`403`, `401` when anonymous) |
 | `FBRST138` | too many requests from this client (`429`, with `Retry-After`): `server-rate-limit` or `server-max-concurrent` |
+| `FBRST139` | `response.headers` set by SQL isn't a JSON array of objects with string values (`500`) |
+| `FBRST140` | `response.status` set by SQL isn't a status code from 200 to 599 (`500`) |
+| `FBRST141` | the `db-root-spec` routine has no output (`500`) |
 | `FBRST133` | a raw request body (`text/plain`, `application/octet-stream`...) sent to a routine that doesn't have exactly one parameter |
 | `FBRST132` | a query plan was asked for a method without statements (`OPTIONS`) |
 | `FBRST200` | no relationship between the tables |

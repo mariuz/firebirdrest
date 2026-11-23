@@ -224,6 +224,16 @@ collection. They are recycled after 1000 requests or 5 minutes, and request cont
 set by one request are cleared by the next. `db-read-tx-reuse = false` gives every read its
 own transaction. Query plan requests always use a fresh transaction.
 
+`db-tx-end` sets how write transactions end. The default, `commit-allow-override`, commits and
+lets a request roll back with `Prefer: tx=rollback`. `commit` ignores `Prefer: tx=`, or refuses
+it with `Prefer: handling=strict`. `rollback` and `rollback-allow-override` roll every
+transaction back (the latter unless the request sends `Prefer: tx=commit`). They are for
+test and demo servers, where nothing should be saved.
+
+Waiting for a connection is limited too. When every connection of a role's pool is busy, a
+request waits up to `db-pool-acquisition-timeout` seconds (10 by default), then gets `504` with
+`FBRST003`. Raise `db-pool`, or look for slow requests in the metrics.
+
 ## Rate and concurrency limits
 
 FirebirdREST can limit how much each client may ask, so one caller (or a leaked anonymous

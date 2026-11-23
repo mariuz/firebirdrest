@@ -151,6 +151,28 @@ func (p *prefer) checkAffected(n int64) error {
 	return nil
 }
 
+// txEnd applies db-tx-end: Prefer: tx= is honoured only by the
+// *-allow-override modes (otherwise ignored, or refused with
+// handling=strict), and a request without it gets the configured end.
+func (p *prefer) txEnd(mode string) error {
+	if mode == "" {
+		mode = "commit-allow-override"
+	}
+	def, override := strings.CutSuffix(mode, "-allow-override")
+	if p.tx != "" && !override {
+		if p.handling == "strict" {
+			return &query.Error{Status: 400, Code: "FBRST130", Message: "invalid preferences given with handling=strict",
+				Details: "tx=" + p.tx + ": db-tx-end is " + mode + ", which doesn't allow overriding it"}
+		}
+		p.dropApplied("tx")
+		p.tx = ""
+	}
+	if p.tx == "" {
+		p.tx = def
+	}
+	return nil
+}
+
 // dropApplied removes a preference from Preference-Applied, e.g. a
 // timezone the database refused.
 func (p *prefer) dropApplied(key string) {

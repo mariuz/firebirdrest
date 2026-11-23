@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -35,6 +36,24 @@ type Config struct {
 	// seconds, releasing their metadata locks (0 = never).
 	DBPreparedStatementsIdle int
 	DBReloadEvent            string // POST_EVENT name that triggers a schema reload
+	// DBPoolAcquireTimeout is how long a request waits for a free connection
+	// before 504 (seconds, 0 = until server-request-timeout).
+	DBPoolAcquireTimeout int
+	DBPoolMaxLifetime    int // seconds a connection is kept before it is replaced (0 = forever)
+	DBPoolMaxIdle        int // seconds an unused connection stays open (0 = forever)
+	// DBTxEnd is how transactions end: commit, commit-allow-override,
+	// rollback or rollback-allow-override (Prefer: tx= may change it).
+	DBTxEnd string
+	// DBRootSpec names a routine whose result answers GET / instead of the
+	// generated OpenAPI document.
+	DBRootSpec string
+	// LogQuery logs the SQL text of every statement (log-query = all).
+	LogQuery bool
+	// TraceHeader is a request header (X-Request-Id) echoed in the response
+	// and written to the request log.
+	TraceHeader    string
+	UnixSocket     string // serve on this Unix socket instead of server-host and server-port
+	UnixSocketMode uint32 // permissions of the socket file
 	// DBEvents lists the Firebird events clients may listen for at
 	// GET /events/<name>; empty disables the endpoint. DBEventsRoles limits
 	// listening to these roles (empty: any authenticated role).
@@ -81,6 +100,8 @@ type Config struct {
 	// Warnings are deprecation notices and advice found while loading; the
 	// server logs them at startup and -check prints them.
 	Warnings []string
+	// effective holds each setting as loaded, for -dump-config.
+	effective map[string]string
 }
 
 // deprecated maps old setting keys to their replacements. An old key keeps
@@ -151,7 +172,19 @@ var keys = map[string]string{
 	"openapi-server-proxy-uri":    "FBREST_OPENAPI_SERVER_PROXY_URI",
 	"openapi-mode":                "FBREST_OPENAPI_MODE",
 	"log-level":                   "FBREST_LOG_LEVEL",
+	"log-query":                   "FBREST_LOG_QUERY",
+	"db-pool-acquisition-timeout": "FBREST_DB_POOL_ACQUISITION_TIMEOUT",
+	"db-pool-max-lifetime":        "FBREST_DB_POOL_MAX_LIFETIME",
+	"db-pool-max-idletime":        "FBREST_DB_POOL_MAX_IDLETIME",
+	"db-tx-end":                   "FBREST_DB_TX_END",
+	"db-root-spec":                "FBREST_DB_ROOT_SPEC",
+	"server-trace-header":         "FBREST_SERVER_TRACE_HEADER",
+	"server-unix-socket":          "FBREST_SERVER_UNIX_SOCKET",
+	"server-unix-socket-mode":     "FBREST_SERVER_UNIX_SOCKET_MODE",
 }
+
+// secretKeys are shown as *** by -dump-config.
+var secretKeys = map[string]bool{"jwt-secret": true, "admin-server-token": true}
 
 // Load reads the optional config file, then lets environment variables override it.
 func Load(path string) (*Config, error) {
@@ -196,32 +229,41 @@ func Load(path string) (*Config, error) {
 			return nil, err
 		}
 	}
+	effective := map[string]string{}
 	get := func(env, def string) string {
-		if v, ok := os.LookupEnv(env); ok {
-			return v
+		v, ok := os.LookupEnv(env)
+		if !ok {
+			if v, ok = vals[env]; !ok {
+				v = def
+			}
 		}
-		if v, ok := vals[env]; ok {
-			return v
-		}
-		return def
+		effective[env] = v
+		return v
 	}
+	// note replaces what get recorded with the value in use, after parsing
+	// or defaulting
+	note := func(env, v string) { effective[env] = v }
 	// an empty value keeps the default: "admin-pprof =" must not enable pprof
 	getBool := func(env string, def bool) bool {
 		s := strings.TrimSpace(get(env, ""))
-		if s == "" {
-			return def
+		b := def
+		if s != "" {
+			b = isTrue(s)
 		}
-		return isTrue(s)
+		note(env, strconv.FormatBool(b))
+		return b
 	}
 	geti := func(env string, def int) (int, error) {
 		s := get(env, "")
 		if s == "" {
+			note(env, strconv.Itoa(def))
 			return def, nil
 		}
 		n, err := strconv.Atoi(s)
 		if err != nil {
 			return 0, fmt.Errorf("%s must be an integer: %w", env, err)
 		}
+		note(env, strconv.Itoa(n))
 		return n, nil
 	}
 	c := &Config{
@@ -335,6 +377,7 @@ func Load(path string) (*Config, error) {
 		if err != nil || f < 0 || math.IsInf(f, 0) || math.IsNaN(f) {
 			return 0, fmt.Errorf("%s must be a number of requests per second, got %q", env, s)
 		}
+		note(env, strconv.FormatFloat(f, 'g', -1, 64))
 		return f, nil
 	}
 	if c.RateLimit, err = getf("FBREST_SERVER_RATE_LIMIT"); err != nil {
@@ -374,6 +417,7 @@ func Load(path string) (*Config, error) {
 	if c.OTelEndpoint != "" && !strings.HasPrefix(c.OTelEndpoint, "http://") && !strings.HasPrefix(c.OTelEndpoint, "https://") {
 		return nil, fmt.Errorf("otel-traces-endpoint must be an http:// or https:// URL, got %q", c.OTelEndpoint)
 	}
+	note("FBREST_OTEL_TRACES_ENDPOINT", c.OTelEndpoint)
 	c.OTelHeaders = os.Getenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS")
 	if c.OTelHeaders == "" {
 		c.OTelHeaders = os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")
@@ -385,6 +429,7 @@ func Load(path string) (*Config, error) {
 	if c.OTelServiceName == "" {
 		c.OTelServiceName = "firebirdrest"
 	}
+	note("FBREST_OTEL_SERVICE_NAME", c.OTelServiceName)
 	c.OTelSampleRatio = 1
 	if s := strings.TrimSpace(get("FBREST_OTEL_TRACES_SAMPLE_RATIO", "")); s != "" {
 		f, err := strconv.ParseFloat(s, 64)
@@ -393,6 +438,7 @@ func Load(path string) (*Config, error) {
 		}
 		c.OTelSampleRatio = f
 	}
+	note("FBREST_OTEL_TRACES_SAMPLE_RATIO", strconv.FormatFloat(c.OTelSampleRatio, 'g', -1, 64))
 	c.JWTSecretIsBase64 = getBool("FBREST_JWT_SECRET_IS_BASE64", false)
 	c.ServerTiming = getBool("FBREST_SERVER_TIMING_ENABLED", false)
 	c.AdminPprof = getBool("FBREST_ADMIN_PPROF", false)
@@ -408,6 +454,50 @@ func Load(path string) (*Config, error) {
 	case "auto", "always", "never":
 	default:
 		return nil, fmt.Errorf("db-request-context must be auto, always or never, got %q", c.DBRequestContext)
+	}
+	if c.DBPoolAcquireTimeout, err = geti("FBREST_DB_POOL_ACQUISITION_TIMEOUT", 10); err != nil {
+		return nil, err
+	}
+	if c.DBPoolMaxLifetime, err = geti("FBREST_DB_POOL_MAX_LIFETIME", 1800); err != nil {
+		return nil, err
+	}
+	if c.DBPoolMaxIdle, err = geti("FBREST_DB_POOL_MAX_IDLETIME", 300); err != nil {
+		return nil, err
+	}
+	if c.DBPoolAcquireTimeout < 0 || c.DBPoolMaxLifetime < 0 || c.DBPoolMaxIdle < 0 {
+		return nil, fmt.Errorf("db-pool-acquisition-timeout, db-pool-max-lifetime and db-pool-max-idletime must not be negative")
+	}
+	c.DBTxEnd = strings.ToLower(strings.TrimSpace(get("FBREST_DB_TX_END", "commit-allow-override")))
+	switch c.DBTxEnd {
+	case "commit", "commit-allow-override", "rollback", "rollback-allow-override":
+	default:
+		return nil, fmt.Errorf("db-tx-end must be commit, commit-allow-override, rollback or rollback-allow-override, got %q", c.DBTxEnd)
+	}
+	note("FBREST_DB_TX_END", c.DBTxEnd)
+	if strings.HasPrefix(c.DBTxEnd, "rollback") {
+		c.Warnings = append(c.Warnings, "db-tx-end = "+c.DBTxEnd+": every transaction is rolled back, nothing is ever saved")
+	}
+	c.DBRootSpec = strings.TrimSpace(get("FBREST_DB_ROOT_SPEC", ""))
+	switch q := strings.ToLower(strings.TrimSpace(get("FBREST_LOG_QUERY", "disabled"))); q {
+	case "", "disabled":
+	case "all", "main-query":
+		c.LogQuery = true
+	default:
+		return nil, fmt.Errorf("log-query must be disabled or all, got %q", q)
+	}
+	c.TraceHeader = strings.TrimSpace(get("FBREST_SERVER_TRACE_HEADER", ""))
+	if c.TraceHeader != "" && !validHeaderName(c.TraceHeader) {
+		return nil, fmt.Errorf("server-trace-header must be a header name such as X-Request-Id, got %q", c.TraceHeader)
+	}
+	c.UnixSocket = strings.TrimSpace(get("FBREST_SERVER_UNIX_SOCKET", ""))
+	modeStr := strings.TrimSpace(get("FBREST_SERVER_UNIX_SOCKET_MODE", "660"))
+	mode, err := strconv.ParseUint(modeStr, 8, 32)
+	if err != nil || mode > 0o777 || mode&0o600 != 0o600 {
+		return nil, fmt.Errorf("server-unix-socket-mode must be octal permissions from 600 to 777 that let the owner read and write, got %q", modeStr)
+	}
+	c.UnixSocketMode = uint32(mode)
+	if c.UnixSocket != "" && c.TLSCert != "" {
+		c.Warnings = append(c.Warnings, "server-unix-socket is set with TLS: clients must speak HTTPS over the socket")
 	}
 	if c.DBURI == "" {
 		return nil, fmt.Errorf("db-uri (FBREST_DB_URI) is required, e.g. user:password@localhost:3050/var/lib/firebird/data/app.fdb")
@@ -444,7 +534,45 @@ func Load(path string) (*Config, error) {
 	// warnings collected while reading the file come first, then those
 	// added while checking the settings
 	c.Warnings = append(warnings, c.Warnings...)
+	c.effective = map[string]string{}
+	for key, env := range keys {
+		if v, ok := effective[env]; ok {
+			c.effective[key] = v
+		}
+	}
 	return c, nil
+}
+
+// Dump returns the settings in use as a config file, sorted by key, with
+// secrets and the database password hidden: what -dump-config prints.
+func (c *Config) Dump() string {
+	names := make([]string, 0, len(c.effective))
+	for k := range c.effective {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	var sb strings.Builder
+	for _, k := range names {
+		v := c.effective[k]
+		switch {
+		case k == "db-uri":
+			v = RedactURI(v)
+		case secretKeys[k] && v != "" && !strings.HasPrefix(v, "@"):
+			v = "***"
+		}
+		fmt.Fprintf(&sb, "%s = %s\n", k, strconv.Quote(v))
+	}
+	return sb.String()
+}
+
+// validHeaderName reports whether s is an HTTP header field name (a token).
+func validHeaderName(s string) bool {
+	for _, r := range s {
+		if r > 126 || r <= 32 || strings.ContainsRune("\"(),/:;<=>?@[\\]{}", r) {
+			return false
+		}
+	}
+	return s != ""
 }
 
 func isTrue(s string) bool {

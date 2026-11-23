@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,7 +64,7 @@ func (s *Server) newRolePool(db *sql.DB) *rolePool {
 
 // New opens the database and loads the schema cache.
 func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Server, error) {
-	db, err := openPool(cfg.DBURI, "", cfg.DBPool)
+	db, err := openPool(cfg, "")
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +159,8 @@ func withParam(dsn, key, value string) string {
 	return dsn + sep + key + "=" + url.QueryEscape(value)
 }
 
-func openPool(dsn, role string, size int) (*sql.DB, error) {
+func openPool(cfg *config.Config, role string) (*sql.DB, error) {
+	dsn := cfg.DBURI
 	if role != "" {
 		dsn = withParam(dsn, "role", role)
 	}
@@ -166,9 +168,10 @@ func openPool(dsn, role string, size int) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(size)
-	db.SetMaxIdleConns(size)
-	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetMaxOpenConns(cfg.DBPool)
+	db.SetMaxIdleConns(cfg.DBPool)
+	db.SetConnMaxIdleTime(time.Duration(cfg.DBPoolMaxIdle) * time.Second)
+	db.SetConnMaxLifetime(time.Duration(cfg.DBPoolMaxLifetime) * time.Second)
 	return db, nil
 }
 
@@ -199,7 +202,7 @@ func (s *Server) pool(ctx context.Context, role string) (*rolePool, error) {
 	}
 	s.mu.Unlock()
 	// opened without the lock: the round trips must not stall other roles
-	p, err := openPool(s.cfg.DBURI, role, s.cfg.DBPool)
+	p, err := openPool(s.cfg, role)
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +245,11 @@ type reqCtx struct {
 	plan   *planCapture // set for Accept: application/vnd.pgrst.plan
 	timing timing
 	rawCol *schema.Column // the single selected column, for raw responses
+	// traceHeader is server-trace-header, also exposed to SQL as request.header.<name>
+	traceHeader string
+	// respond: the request may reach an object that sets response.status or
+	// response.headers, which are then read after its statements
+	respond bool
 }
 
 // ServeHTTP routes requests.
@@ -253,9 +261,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// type or running anything a value may contain
 	rw.Header().Set("X-Content-Type-Options", "nosniff")
 	rw.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	var traceVal string
+	if s.cfg.TraceHeader != "" {
+		if traceVal = r.Header.Get(s.cfg.TraceHeader); traceVal != "" {
+			rw.Header().Set(s.cfg.TraceHeader, traceVal)
+		}
+	}
 	sp := s.tracer.startRequest(r, start)
 	if sp != nil {
 		r = r.WithContext(context.WithValue(r.Context(), spanCtxKey{}, sp))
+		if s.cfg.TraceHeader != "" && r.Header.Get(s.cfg.TraceHeader) != "" {
+			sp.set("http.request.header."+strings.ToLower(s.cfg.TraceHeader), r.Header.Get(s.cfg.TraceHeader))
+		}
 	}
 	if s.cfg.ServerTimeout > 0 && !isEventStream(r) {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.cfg.ServerTimeout)*time.Second)
@@ -278,12 +295,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				sp.fail(errCode)
 			}
 			sp.finish(time.Now())
-			s.log.Info("request", "method", r.Method, "path", r.URL.Path, "status", rw.status,
-				"took", time.Since(start).Round(time.Microsecond), "trace_id", hex.EncodeToString(sp.trace[:]))
-		} else {
-			s.log.Info("request", "method", r.Method, "path", r.URL.Path, "status", rw.status,
-				"took", time.Since(start).Round(time.Microsecond))
 		}
+		attrs := []any{"method", r.Method, "path", r.URL.Path, "status", rw.status, "took", time.Since(start).Round(time.Microsecond)}
+		if sp != nil {
+			attrs = append(attrs, "trace_id", hex.EncodeToString(sp.trace[:]))
+		}
+		if traceVal != "" {
+			attrs = append(attrs, strings.ToLower(s.cfg.TraceHeader), traceVal)
+		}
+		s.log.Info("request", attrs...)
 	}()
 	s.cors(rw, r)
 	if r.Method == http.MethodOptions {
@@ -327,7 +347,11 @@ func (s *Server) cors(w http.ResponseWriter, r *http.Request) {
 		h.Set("Access-Control-Allow-Credentials", "true")
 		h.Add("Vary", "Origin")
 	}
-	h.Set("Access-Control-Expose-Headers", "Content-Encoding, Content-Location, Content-Range, Content-Type, Date, Location, Server, Transfer-Encoding, Range-Unit, Preference-Applied, Content-Profile, Retry-After")
+	expose := "Content-Encoding, Content-Location, Content-Range, Content-Type, Date, Location, Server, Transfer-Encoding, Range-Unit, Preference-Applied, Content-Profile, Retry-After"
+	if s.cfg.TraceHeader != "" {
+		expose += ", " + s.cfg.TraceHeader
+	}
+	h.Set("Access-Control-Expose-Headers", expose)
 	if r.Method == http.MethodOptions {
 		h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS, HEAD")
 		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Accept-Language, Content-Language, Prefer, Range, Accept-Profile, Content-Profile")
@@ -374,14 +398,20 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) error {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			return &query.Error{Status: 405, Code: "FBRST117", Message: "only GET is allowed on /"}
 		}
+		if s.cfg.DBRootSpec != "" {
+			return s.rootSpec(w, r, sc)
+		}
 		return s.serveOpenAPI(w, r, sc)
 	}
 
 	if normalizeAccept(r) {
 		r = r.WithContext(query.WithStripNulls(r.Context()))
 	}
-	rc := &reqCtx{w: w, r: r, sc: sc, prefer: parsePrefer(r.Header.Values("Prefer"))}
+	rc := &reqCtx{w: w, r: r, sc: sc, prefer: parsePrefer(r.Header.Values("Prefer")), traceHeader: s.cfg.TraceHeader}
 	if err := rc.prefer.check(); err != nil {
+		return err
+	}
+	if err := rc.prefer.txEnd(s.cfg.DBTxEnd); err != nil {
 		return err
 	}
 	if err := s.readRequestBody(rc); err != nil {
@@ -468,6 +498,7 @@ func (s *Server) route(rc *reqCtx, parts []string) error {
 			return &query.Error{Status: 404, Code: "FBRST202",
 				Message: fmt.Sprintf("could not find the procedure or function %q in the schema cache", parts[1])}
 		}
+		rc.respond = rt.SetsResponse || s.preRequestResponds(sc)
 		return s.withTx(rc, readOnly(r.Method), func() error { return s.rpc(rc, rt) })
 	case len(parts) == 1:
 		rel := sc.Relation(parts[0])
@@ -490,6 +521,7 @@ func (s *Server) route(rc *reqCtx, parts []string) error {
 		default:
 			return &query.Error{Status: 405, Code: "FBRST117", Message: "method not allowed"}
 		}
+		rc.respond = rel.SetsResponse || s.preRequestResponds(sc)
 		return s.withTx(rc, readOnly(r.Method), fn)
 	}
 	return &query.Error{Status: 404, Code: "FBRST125", Message: "invalid path"}
@@ -547,13 +579,13 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 	var conn *sql.Conn
 	var tx *sql.Tx
 	if reuse {
-		if rt, err = p.acquireRead(ctx); err != nil {
+		if rt, err = p.acquireRead(ctx, s.cfg.DBPoolAcquireTimeout); err != nil {
 			return err
 		}
 		conn, tx = rt.conn, rt.tx
 	} else {
 		p.freeForWrite()
-		if conn, err = p.db.Conn(ctx); err != nil {
+		if conn, err = acquire(ctx, p.db, s.cfg.DBPoolAcquireTimeout); err != nil {
 			return err
 		}
 		defer conn.Close() // back to the pool once the transaction has ended
@@ -569,6 +601,9 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 		stmts = &stmtSpans{parent: tsp}
 	}
 	rc.tx = &cachedTx{tx: tx, conn: conn, cache: p.cache, stmts: stmts}
+	if s.cfg.LogQuery {
+		rc.tx.log = s.log.With("role", rc.role)
+	}
 	// hold the response until COMMIT succeeds (plan mode discards it anyway)
 	out := rc.w
 	var held *txWriter
@@ -621,6 +656,10 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 			if err := rc.plan.explain(rc); err != nil {
 				return err
 			}
+			return nil
+		}
+		if rc.respond {
+			return s.applyResponseVars(rc, held)
 		}
 		return nil
 	}
@@ -631,7 +670,9 @@ func (s *Server) withTx(rc *reqCtx, ro bool, fn func() error) error {
 			// the context block may have run before fn failed: clear next time
 			rt.vars = prevVars
 		}
-		p.releaseRead(rt, err != nil && connectionLost(err))
+		// a failed request may leave response.* variables set by a
+		// procedure: end the transaction rather than pass them on
+		p.releaseRead(rt, err != nil && (connectionLost(err) || rc.respond))
 	} else if err != nil {
 		tx.Rollback()
 	} else if rc.prefer.tx == "rollback" || rc.plan != nil {
@@ -764,7 +805,11 @@ func requestVars(rc *reqCtx) [][2]string {
 			}
 		}
 	}
-	for _, h := range []string{"Origin", "User-Agent", "X-Forwarded-For"} {
+	hs := []string{"Origin", "User-Agent", "X-Forwarded-For"}
+	if th := rc.traceHeader; th != "" && !slices.Contains(hs, http.CanonicalHeaderKey(th)) {
+		hs = append(hs, th)
+	}
+	for _, h := range hs {
 		if v := rc.r.Header.Get(h); v != "" {
 			vars = append(vars, [2]string{"request.header." + strings.ToLower(h), v})
 		}
@@ -838,4 +883,33 @@ func pickSchema(cat *schema.Catalog, r *http.Request) (*schema.Schema, error) {
 			Hint:    "expose more schemas with db-schemas"}
 	}
 	return sc, nil
+}
+
+// DumpSchema connects with cfg, loads the schema cache and returns it as
+// JSON (-dump-schema).
+func DumpSchema(ctx context.Context, cfg *config.Config) ([]byte, error) {
+	db, err := openPool(cfg, "")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	cat, err := schema.LoadCatalog(ctx, db, cfg.DBSchemas)
+	if err != nil {
+		return nil, err
+	}
+	return cat.Dump()
+}
+
+// preRequestResponds reports whether the db-pre-request procedure may set
+// response.status or response.headers.
+func (s *Server) preRequestResponds(sc *schema.Schema) bool {
+	if s.cfg.DBPreRequest == "" || sc.Response == nil {
+		return false
+	}
+	for _, part := range strings.Split(s.cfg.DBPreRequest, ".") {
+		if sc.Response.Has(strings.ToUpper(strings.TrimSpace(part))) {
+			return true
+		}
+	}
+	return false
 }

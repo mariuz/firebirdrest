@@ -5,6 +5,33 @@ All notable changes to FirebirdREST are listed here. The project follows
 
 ## [Unreleased]
 
+### Added
+- Status and headers set from SQL, as PostgREST's `response.status` and `response.headers`: a
+  procedure, function, trigger or view sets them as `USER_TRANSACTION` context variables, and the
+  response gets them (`POST /rpc/add_author` answers `201` with a `Location`). Headers longer
+  than one variable's 255 characters continue in `response.headers.2` … `.16`. They are read back
+  only for requests that can reach an object setting them, found through `RDB$DEPENDENCIES`, so
+  other requests cost nothing more
+  ([details](https://mariuz.github.io/firebirdrest/api/rpc/#status-and-headers-from-sql)).
+- `db-tx-end` (`commit`, `commit-allow-override`, `rollback`, `rollback-allow-override`) decides how
+  transactions end and whether `Prefer: tx=` may change it.
+- `db-root-spec`: a routine whose result answers `GET /` instead of the generated OpenAPI document.
+- `db-pool-acquisition-timeout`, `db-pool-max-lifetime` and `db-pool-max-idletime`.
+- `server-trace-header` (such as `X-Request-Id`): copied into the response, the request log, the
+  trace and `request.header.<name>` for PSQL.
+- `server-unix-socket` and `server-unix-socket-mode`: serve on a Unix socket, for a proxy on the
+  same machine.
+- `log-query = all` logs the text of every SQL statement, without parameter values.
+- `-dump-config` prints the settings in use as a config file (secrets hidden); `-dump-schema`
+  prints the schema cache as JSON.
+- The example database gains `set_response`, `add_author`, `cached_titles` and `root_spec`.
+
+### Behaviour changes to check before upgrading
+- A request now waits at most 10 seconds for a free database connection, then gets `504`
+  (`FBRST003`), instead of waiting up to `server-request-timeout`. Set
+  `db-pool-acquisition-timeout = 0` for the old behaviour.
+- Connections are replaced after 30 minutes (`db-pool-max-lifetime`); they were kept until idle.
+
 ## [0.11.0] - 2026-11-12
 
 ### Added

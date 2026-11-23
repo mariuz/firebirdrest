@@ -26,6 +26,8 @@ import (
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	checkOnly := flag.Bool("check", false, "load the configuration, report problems and exit without connecting")
+	dumpConfig := flag.Bool("dump-config", false, "print the settings in use as a config file (secrets hidden) and exit")
+	dumpSchema := flag.Bool("dump-schema", false, "connect, print the schema cache as JSON and exit")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: firebirdrest [config-file]\n\nSettings can also be given as FBREST_* environment variables.\n")
 		flag.PrintDefaults()
@@ -45,6 +47,19 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config error:", err)
 		os.Exit(2)
+	}
+	if *dumpConfig {
+		fmt.Print(cfg.Dump())
+		return
+	}
+	if *dumpSchema {
+		out, err := server.DumpSchema(context.Background(), cfg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		os.Stdout.Write(append(out, '\n'))
+		return
 	}
 	if *checkOnly {
 		if cfg.TLSCert != "" {
@@ -158,16 +173,29 @@ func main() {
 			log.Warn("requests still running after 10s, closing anyway", "err", err)
 		}
 	}()
-	log.Info("listening", "addr", addr, "tls", certs != nil)
-	serve := hs.ListenAndServe
+	var ln net.Listener
+	if cfg.UnixSocket != "" {
+		if ln, err = listenUnix(cfg.UnixSocket, os.FileMode(cfg.UnixSocketMode)); err != nil {
+			log.Error("server-unix-socket", "err", err)
+			os.Exit(1)
+		}
+		log.Info("listening", "socket", cfg.UnixSocket, "mode", fmt.Sprintf("%o", cfg.UnixSocketMode), "tls", certs != nil)
+	} else {
+		if ln, err = net.Listen("tcp", addr); err != nil {
+			log.Error("server stopped", "err", err)
+			os.Exit(1)
+		}
+		log.Info("listening", "addr", addr, "tls", certs != nil)
+	}
+	serve := func() error { return hs.Serve(ln) }
 	if certs != nil {
-		serve = func() error { return hs.ListenAndServeTLS("", "") } // the certificate comes from TLSConfig
+		serve = func() error { return hs.ServeTLS(ln, "", "") } // the certificate comes from TLSConfig
 	}
 	if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
-	// ListenAndServe returns as soon as Shutdown starts: wait for the requests
+	// Serve returns as soon as Shutdown starts: wait for the requests
 	// in flight before the deferred srv.Close() closes their connections
 	<-stopped
 }
@@ -196,4 +224,26 @@ func listenReload(ctx context.Context, cfg *config.Config, srv *server.Server, l
 		case <-time.After(30 * time.Second):
 		}
 	}
+}
+
+// listenUnix listens on a Unix socket with the given permissions. A socket
+// file left by an earlier run is removed first; any other file is not.
+func listenUnix(path string, mode os.FileMode) (net.Listener, error) {
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("%s exists and is not a socket", path)
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, err
+		}
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return ln, nil
 }

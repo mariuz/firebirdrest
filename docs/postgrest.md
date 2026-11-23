@@ -30,6 +30,10 @@ list below.
 - `jwt-role-claim-key` paths with array indexes and quoted keys (`realm_access.roles[0]`).
 - `Prefer: handling=strict`, `max-affected` and `timezone`; query plans with `Accept: application/vnd.pgrst.plan`
   (behind `db-plan-enabled`).
+- Status and headers set from SQL (`response.status`, `response.headers`), as context variables.
+- `db-tx-end`, `db-root-spec`, `db-pool-acquisition-timeout`, `db-pool-max-lifetime`,
+  `db-pool-max-idletime`, `server-trace-header`, `server-unix-socket` (and its mode),
+  `--dump-config`, `--dump-schema`, and `log-query` (as `all`: every statement, without values).
 
 ## Different
 
@@ -38,6 +42,8 @@ list below.
 | Namespaces | exposed schemas, `Accept-Profile` | the same on Firebird 6 (`db-schemas`, `Accept-Profile`, `Content-Profile`); Firebird 3–5 have no schemas: one namespace. Packaged routines are `/rpc/package.name` |
 | Relationships across schemas | foreign keys into other exposed schemas | the same on Firebird 6: foreign keys between exposed schemas embed both ways |
 | Identifier case | as stored | unquoted (upper case) names shown in lower case |
+| `response.headers` | a GUC of any length | a context variable holds 255 characters; longer values continue in `response.headers.2` … `.16` |
+| `db-tx-end` default | `commit` (`Prefer: tx` ignored) | `commit-allow-override`, so `Prefer: tx=rollback` keeps working as before |
 | Claims in SQL | `current_setting('request.jwt.claims')::json` | `RDB$GET_CONTEXT('USER_TRANSACTION', 'request.jwt.claim.<name>')`, one variable per claim (Firebird has no JSON functions) |
 | Computed fields / relationships | functions taking a table row | routines whose parameters are `TYPE OF COLUMN <table>.<col>` |
 | To-one computed relationship | function returning one row | executable procedure |
@@ -63,16 +69,9 @@ list below.
 | Custom media types | handler functions per media type | any concrete `Accept` type returns a single value as is ([details](api/formats-errors.md#single-values-and-files)); a raw request body goes to a routine's only parameter |
 | `application/geo+json` | built in | request it from a function that returns GeoJSON text |
 
-## Not yet
+## Not possible in Firebird
 
-PostgREST features FirebirdREST doesn't have yet, all on the roadmap:
-
-- Status and headers set from SQL (`response.status`, `response.headers`).
-- `server-trace-header`, `server-unix-socket`, `db-pool-acquisition-timeout`,
-  `db-pool-max-lifetime`, `db-tx-end`, `db-root-spec`, `--dump-config`, `--dump-schema`, and
-  logging each SQL statement (statements are in the [traces](references/observability.md#traces)).
-
-Not possible in Firebird: full-text search (`fts` and its variants; `containing` covers simple
+Full-text search (`fts` and its variants; `containing` covers simple
 cases), regular expressions (`match`, `imatch`; `similar` is the closest), JSON and array
 operators, and PostGIS.
 

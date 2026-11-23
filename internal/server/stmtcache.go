@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"database/sql"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -163,11 +164,16 @@ type cachedTx struct {
 	record *[]string
 	// stmts times each statement for tracing (nil when the request isn't traced)
 	stmts *stmtSpans
+	// log, when set (log-query = all), logs the text of every statement
+	log *slog.Logger
 }
 
 func (t *cachedTx) note(query string) {
 	if t.record != nil {
 		*t.record = append(*t.record, query)
+	}
+	if t.log != nil {
+		t.log.Info("query", "sql", query)
 	}
 	t.stmts.start(query)
 }

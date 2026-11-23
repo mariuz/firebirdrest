@@ -131,6 +131,48 @@ GRANT EXECUTE ON PACKAGE catalog TO ROLE web_anon;
 GRANT INSERT ON orders TO PROCEDURE place_order;
 ```
 
+## Status and headers from SQL
+
+A routine can choose the response's status code and add headers, as with PostgREST's
+`response.status` and `response.headers`: it sets these `USER_TRANSACTION` context variables.
+
+```sql
+r = RDB$SET_CONTEXT('USER_TRANSACTION', 'response.status', 201);
+r = RDB$SET_CONTEXT('USER_TRANSACTION', 'response.headers',
+      '[{"Location": "/authors?id=eq.' || id || '"}, {"Cache-Control": "no-cache"}]');
+```
+
+```
+POST /rpc/add_author {"name": "Iain M. Banks"}
+# 201 Created
+# Location: /authors?id=eq.7
+```
+
+- `response.status` is a status code from 200 to 599.
+- `response.headers` is a JSON array of objects whose values are strings. The same name may
+  come twice, for several `Set-Cookie` headers. These headers replace FirebirdREST's own, such as
+  `Content-Type`; `Content-Length`, `Transfer-Encoding` and `Connection` are ignored.
+- A context variable holds at most 255 characters. Longer headers continue in
+  `response.headers.2`, `response.headers.3` and so on, up to `response.headers.16`; the pieces
+  are joined before the JSON is read. `set_response` in
+  [`examples/bookstore.sql`](https://github.com/mariuz/firebirdrest/blob/main/examples/bookstore.sql)
+  splits a value of any length that way, and other routines can call it:
+  `EXECUTE PROCEDURE set_response(201, :headers)`.
+- An invalid value fails the request with `500` (`FBRST139` for headers, `FBRST140` for the
+  status) and rolls the transaction back.
+- They apply only when the request succeeds. They also apply with `Prefer: tx=rollback`.
+
+Procedures, functions, triggers and views can set them, and so can the
+[pre-request procedure](../references/security.md#pre-request-procedure) (for example to add
+`Cache-Control` to every response). Reading them back costs one more round trip, so
+FirebirdREST does it only for requests that can reach an object that sets them. That means
+an object whose source mentions `response.`, or one that uses such an object (found through
+`RDB$DEPENDENCIES`), such as a procedure that calls `set_response`. It covers calls to those
+routines, requests on those views and on tables with such triggers, and requests on tables
+related to them or with such computed fields. A database trigger, a column expression or a
+stripped source that mentions them makes every request read them. `firebirdrest -dump-schema`
+shows the result as `setsResponse`.
+
 ## Errors
 
 A PSQL `EXCEPTION` raised by the routine (or by a trigger it fires) becomes a `400` response. The

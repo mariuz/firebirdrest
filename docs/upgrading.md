@@ -24,6 +24,21 @@ Client code written against the documented API keeps working. If you use
 [firebirdrest-js](https://github.com/mariuz/firebirdrest-js), its suite skips features newer
 than the server, so a newer client works with an older server.
 
+## 0.11.0 → 0.12.0
+
+Two behaviour changes in the connection pool:
+
+| Change | Affects | What to do |
+|---|---|---|
+| A request waits at most 10 seconds for a free database connection, then gets `504` (`FBRST003`); before, it waited up to `server-request-timeout`. | Servers whose pool is often exhausted under load. | Raise `db-pool`, or set `db-pool-acquisition-timeout = 0` for the old behaviour. |
+| Connections are replaced after 30 minutes (`db-pool-max-lifetime`). | Nothing visible; a few more connects. | `db-pool-max-lifetime = 0` keeps them. |
+
+New and off by default: `response.status` and `response.headers` from SQL, `db-tx-end` (its
+default keeps `Prefer: tx=rollback` working), `db-root-spec`, `server-trace-header`,
+`server-unix-socket`, `log-query`, `-dump-config` and `-dump-schema`. A database whose
+routines, triggers or views already use context variables named `response.status` or
+`response.headers` for something else now sets the response with them: rename those variables.
+
 ## 0.10.0 → 0.11.0
 
 No behaviour changes for existing requests. Views now have the relationships of their base
